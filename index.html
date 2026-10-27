@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gomu Gomu</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="stage">
+    <canvas id="gl"></canvas>
+    <canvas id="hud"></canvas>
+  </div>
+
+  <div id="start">
+    <h1>GOMU GOMU NO...</h1>
+    <p>pinch your cheek (or click + drag it) and pull</p>
+    <button id="go">turn on camera</button>
+    <small id="status"></small>
+  </div>
+
+  <video id="cam" playsinline muted></video>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
