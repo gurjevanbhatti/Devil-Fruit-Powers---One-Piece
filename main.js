@@ -445,7 +445,18 @@ function step() {
     const root = g.attach.kind === 'arm' && pose ? pose[g.attach.arm.shoulder] : null
     const rx = root ? (ax - root.x) * aspect : 0
     const ry = root ? ay - root.y : 0
-    return { ax, ay, dx, dy, s2: 2 * g.sigma * g.sigma, root, rx, ry, rlen2: rx * rx + ry * ry || 1 }
+    // the pull reaches further along the pull direction the further you pull. if it stays a small
+    // circle the grabbed skin overtakes the skin in front of it and folds over, so you see it twice
+    const len = Math.hypot(dx * aspect, dy)
+    const along = Math.max(g.sigma, len / 1.2)
+    return {
+      ax, ay, dx, dy, root, rx, ry,
+      rlen2: rx * rx + ry * ry || 1,
+      ux: len ? (dx * aspect) / len : 1,
+      uy: len ? dy / len : 0,
+      s2: 2 * g.sigma * g.sigma,
+      s2along: 2 * along * along,
+    }
   })
 
   for (let i = 0; i < vertCount * 2; i += 2) {
@@ -465,7 +476,10 @@ function step() {
       }
       const ddx = (rest[i] - cx) * aspect
       const ddy = rest[i + 1] - cy
-      const w = ramp * Math.exp(-(ddx * ddx + ddy * ddy) / a.s2)
+      // split the distance into along the pull and across it, so the band stays thin
+      const da = ddx * a.ux + ddy * a.uy
+      const dc = ddx * a.uy - ddy * a.ux
+      const w = ramp * Math.exp(-(da * da) / a.s2along - (dc * dc) / a.s2)
       tx += a.dx * w
       ty += a.dy * w
     }
