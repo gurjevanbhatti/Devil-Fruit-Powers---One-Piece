@@ -41,7 +41,7 @@ const FOLLOW = 0.2
 const SNAP = 1
 // the face itself only gets tugged this far (in grab radii). any further and the skin
 // folds over and you see it twice, so the rest of the pull is drawn as a rubber ribbon
-const TUG = 1.2
+const TUG = 1.5
 // how fast a ribbon shoots back when you let go, and how smooth it is
 const RIBBON_SNAP = 0.45
 const RIBBON_SEGS = 24
@@ -167,11 +167,14 @@ const ribbonVert = `
 attribute vec2 pos;
 attribute vec2 src;
 attribute float shade;
+attribute float alpha;
 varying vec2 uv;
 varying float vShade;
+varying float vAlpha;
 void main() {
   uv = vec2(1.0 - src.x, src.y);
   vShade = shade;
+  vAlpha = alpha;
   gl_Position = vec4(pos.x * 2.0 - 1.0, 1.0 - pos.y * 2.0, 0.0, 1.0);
 }`
 
@@ -180,15 +183,16 @@ precision mediump float;
 uniform sampler2D tex;
 varying vec2 uv;
 varying float vShade;
+varying float vAlpha;
 void main() {
-  gl_FragColor = vec4(texture2D(tex, uv).rgb * vShade, 1.0);
+  gl_FragColor = vec4(texture2D(tex, uv).rgb * vShade, vAlpha);
 }`
 
 const ribbonProg = gl.createProgram()
 gl.attachShader(ribbonProg, compile(gl.VERTEX_SHADER, ribbonVert))
 gl.attachShader(ribbonProg, compile(gl.FRAGMENT_SHADER, ribbonFrag))
 gl.linkProgram(ribbonProg)
-const ribbonLocs = ['pos', 'src', 'shade'].map((n) => gl.getAttribLocation(ribbonProg, n))
+const ribbonLocs = ['pos', 'src', 'shade', 'alpha'].map((n) => gl.getAttribLocation(ribbonProg, n))
 const ribbonBuf = gl.createBuffer()
 
 // ---------- erase (fill) ----------
@@ -506,7 +510,6 @@ glCanvas.addEventListener('pointercancel', (e) => endGrab('p' + e.pointerId))
 
 const pinching = [false, false]
 const smoothed = [null, null]
-let pinchPoints = []
 let hands = [] // every hand this frame, mirrored to screen space
 
 // fingertip -> its knuckle, the stretched finger roots at the knuckle
@@ -575,7 +578,6 @@ function trackFinger(a, grabber) {
 }
 
 function updateHands(result) {
-  pinchPoints = []
   const seen = [false, false]
   hands = result.landmarks.map((hand) => hand.map((p) => ({ x: 1 - p.x, y: p.y })))
 
@@ -591,7 +593,6 @@ function updateHands(result) {
 
     // a bit of hysteresis so it doesn't flicker between pinch and not pinch
     const isPinch = pinching[h] ? gap < size * 0.45 : gap < size * 0.3
-    pinchPoints.push({ x, y, isPinch })
     const wrist = { x: 1 - hand[0].x, y: hand[0].y }
 
     // smooth the pinch point so the stretch doesn't jitter
@@ -750,15 +751,23 @@ function step() {
     const len = Math.hypot(dx * aspect, dy)
     const cap = Math.min(1, (g.sigma * TUG) / (len || 1))
     active.push({ ax, ay, dx: dx * cap, dy: dy * cap, s2: 2 * g.sigma * g.sigma })
+    // the stretched skin is a real patch of your face: from a bit inside your face (the
+    // root) up to where you grabbed. the root is drawn right where that skin really is, at
+    // its real size, so the stretch grows out of your face instead of sitting on top of it
+    const w = g.sigma * 2
+    const ux = len ? (dx * aspect) / len : 1
+    const uy = len ? dy / len : 0
+    const root = [ax - (ux * w * 0.8) / aspect, ay - uy * w * 0.8]
     g.ribbon = {
       onFace: true,
-      a: [ax, ay],
+      a: [...root],
       b: [g.x, g.y],
-      srcA: [ax, ay],
+      srcA: root,
       srcB: [ax, ay],
-      w: g.sigma * 2.6,
-      srcW: g.sigma * 0.8,
-      aHome: [ax, ay],
+      w,
+      srcW: w,
+      taper: 0.2,
+      aHome: root,
       bHome: [ax, ay],
     }
     ribbons.push(g.ribbon)
@@ -821,12 +830,15 @@ function step() {
 
 // across the ribbon: where each column sits (-1 to 1 edge to edge) and how bright it is.
 // dark edges and a soft shine just off center make it read as a round tube of skin
+// [where across (-1 to 1), brightness, see-through-ness]. gentle shading so it reads as
+// skin not plastic, and see-through at the very edges so they're soft
 const RIBBON_COLS = [
-  [-1, 0.5],
-  [-0.4, 0.95],
-  [0.25, 1.15],
-  [0.6, 0.95],
-  [1, 0.5],
+  [-1, 0.9, 0],
+  [-0.7, 0.95, 1],
+  [0, 1, 1],
+  [0.3, 1.03, 1],
+  [0.7, 0.96, 1],
+  [1, 0.9, 0],
 ]
 
 function ribbonVerts(r, out) {
@@ -851,7 +863,7 @@ function ribbonVerts(r, out) {
     nx = -nx
     ny = -ny
   }
-  const bow = Math.min(stretch * 0.12, 0.08)
+  const bow = Math.min(stretch * 0.05, 0.04)
   const mx = (r.a[0] + r.b[0]) / 2 + (nx * bow) / aspect
   const my = (r.a[1] + r.b[1]) / 2 + ny * bow
   const curve = (t) => {
@@ -878,18 +890,24 @@ function ribbonVerts(r, out) {
     const tl = Math.hypot(tx, ty) || 1
     const px = -ty / tl
     const py = tx / tl
-    // tapers toward your fingers and pinches in a bit in the middle
-    const half = 0.5 * r.w * thin * (1 - (r.taper ?? 0.55) * amt * t) * (1 - 0.15 * amt * Math.sin(Math.PI * t))
+    // full real width where it leaves your body, then necks down, tapers toward your
+    // fingers and pinches in a bit in the middle
+    const shape = thin * (1 - (r.taper ?? 0.55) * amt * t) * (1 - 0.15 * amt * Math.sin(Math.PI * t))
+    const neck = Math.min(1, (t * len) / (r.w * 1.2))
+    const half = 0.5 * r.w * (1 + (shape - 1) * neck)
+    // fade in where it leaves your body and out between your fingers, so neither end has a hard edge
+    const fade = Math.min(1, (t * len) / (r.w * 0.6), ((1 - t) * len) / (r.w * 0.4))
     const sx = r.srcA[0] + (r.srcB[0] - r.srcA[0]) * t
     const sy = r.srcA[1] + (r.srcB[1] - r.srcA[1]) * t
     const sHalf = 0.5 * r.srcW
     rows.push(
-      RIBBON_COLS.map(([side, shade]) => [
+      RIBBON_COLS.map(([side, shade, alpha]) => [
         cx + (px * half * side) / aspect,
         cy + py * half * side,
         sx + (spx * sHalf * side) / aspect,
         sy + spy * sHalf * side,
         1 + (shade - 1) * amt,
+        alpha * fade,
       ]),
     )
   }
@@ -985,13 +1003,17 @@ function drawRibbons() {
   gl.useProgram(ribbonProg)
   gl.bindBuffer(gl.ARRAY_BUFFER, ribbonBuf)
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STREAM_DRAW)
-  const [pos, src, shade] = ribbonLocs
+  const [pos, src, shade, alpha] = ribbonLocs
   for (const loc of ribbonLocs) gl.enableVertexAttribArray(loc)
-  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 20, 0)
-  gl.vertexAttribPointer(src, 2, gl.FLOAT, false, 20, 8)
-  gl.vertexAttribPointer(shade, 1, gl.FLOAT, false, 20, 16)
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 24, 0)
+  gl.vertexAttribPointer(src, 2, gl.FLOAT, false, 24, 8)
+  gl.vertexAttribPointer(shade, 1, gl.FLOAT, false, 24, 16)
+  gl.vertexAttribPointer(alpha, 1, gl.FLOAT, false, 24, 20)
   gl.disable(gl.DEPTH_TEST)
-  gl.drawArrays(gl.TRIANGLES, 0, out.length / 5)
+  gl.enable(gl.BLEND)
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+  gl.drawArrays(gl.TRIANGLES, 0, out.length / 6)
+  gl.disable(gl.BLEND)
   gl.enable(gl.DEPTH_TEST)
   for (const loc of ribbonLocs) gl.disableVertexAttribArray(loc)
 }
@@ -1334,13 +1356,6 @@ function drawHud() {
   const w = hud.width
   const h = hud.height
   ctx.clearRect(0, 0, w, h)
-
-  for (const p of pinchPoints) {
-    ctx.beginPath()
-    ctx.arc(p.x * w, p.y * h, p.isPinch ? 10 : 6, 0, Math.PI * 2)
-    ctx.fillStyle = p.isPinch ? '#e63946' : 'rgba(255,255,255,0.6)'
-    ctx.fill()
-  }
 
   // charge ring around the hand while you hold your arm out
   for (const st of armState) {
