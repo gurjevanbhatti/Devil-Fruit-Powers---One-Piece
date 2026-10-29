@@ -1,36 +1,32 @@
 # Gomu Gomu
 
-Stretch your face, fingers and arms like Luffy, live on your webcam.
-
-## Running it
-
-```bash
-cd ~/Desktop/"One Piece Project"
-.venv/bin/pip install -r requirements.txt   # first time only
-.venv/bin/python app.py
-```
-
-The first run downloads the MediaPipe hand, face and body models into `models/`. On a Mac, allow camera access for your terminal (or VS Code) in System Settings > Privacy & Security > Camera. Press `q` or `esc` to quit.
+Stretch your face and body like Luffy, live on your webcam.
 
 ## How to use it
 
-- **Pinch your cheek** (or the corner of your mouth) with your thumb and index finger and pull your hand away. A strip of your skin stretches out with your hand.
-- **Pinch a fingertip of your other hand** and pull. That finger stretches out from its knuckle.
-- Or **click and drag** your cheek or a fingertip with the mouse.
-- **Hold an arm out straight** for about a second. A yellow ring fills up around your hand, then your forearm and hand shoot outward. Drop your arm to snap it back.
-- Let go and it springs back. Fingers and arms bounce a little; cheeks just slide back so nothing swings across your face.
+- **Pinch** your cheek, the corner of your mouth, your arm or your neck with your thumb and index finger and pull your hand away.
+- Or **click and drag** any part of yourself with the mouse (or your finger on a phone).
+- **Hold an arm out straight** for about a second. A yellow ring fills up around your hand, then your hand shoots outward and your arm stretches. Drop your arm to snap it back.
+- Let go and it snaps back and wobbles. Pull far enough and you get a **PISTOL!!**
+
+Only you stretch. You can't grab the background.
 
 ## How it works
 
-- **MediaPipe** (hand, face and pose landmarkers) tracks your hands, 478 points on your face, and your arms every frame.
-- Every stretch is the **real picture of your skin bent like rubber**, the method from [gum-gum-hand-stretch](https://github.com/gazellecheetah/gum-gum-hand-stretch), written from scratch here:
-  - When you grab, a strip of the picture is cut out: along the finger (trimmed to the finger's own skin colour so the wall beside it is left out), along your forearm, or a strip of cheek from inside your face out to where you grabbed.
-  - It's turned into a mesh of triangles and bent with **as-rigid-as-possible** deformation (Igarashi, Moscovich & Hughes 2005, in [rubber.py](rubber.py)). The end near your body stays stuck to you, the end you're holding moves as one solid patch, and the triangles in between stay as close to their real shape as they can, so it never folds over itself.
-  - It narrows and gets a soft shine the further past normal length it goes. At normal length it's exactly the real thing again, so it springs back without a seam.
-  - The spot where the real finger / arm / cheek strip is gets filled in with OpenCV's inpaint, so you only ever see the stretched one.
-  - For a cheek, the skin around where you grabbed also gets dragged toward your hand a little (capped so it can't fold).
-- All the tuning numbers are at the top of [app.py](app.py).
+- **MediaPipe Face Landmarker** finds 478 points on your face every frame. Its outline decides what you can grab, and every grab sticks to the nearest point so it moves with your head.
+- **MediaPipe Pose Landmarker** tracks your shoulders, arms and torso. A grab on your body sticks to the closest bone, so it follows your arm when you move. The arm doing the pinching is skipped, otherwise it would just grab itself.
+- **MediaPipe Image Segmenter** works out which pixels are you and which are background, so you can't grab the wall.
+- **MediaPipe Hand Landmarker** tracks both hands. A pinch is when your thumb and index fingertips get close compared with the size of your hand.
+- The webcam image is drawn in **WebGL** on an 80x60 grid. Pulling moves the grid points with a Gaussian falloff around the grab point, and each point is a damped spring, which gives the rubbery wobble when you let go. The pull radius is small, so the skin stretches into a thin band like the live-action cheek pull, and the more stretched skin is drawn on top.
 
-## The old browser version
+## Running it
 
-The earlier version that ran in a web page is still here (`index.html`, `main.js`, `rubber.js`, `fruits.js`, `style.css`). Serve the folder with `python3 -m http.server 8123` and open http://localhost:8123 to run it.
+The camera only works on `localhost` or https, so serve the folder rather than opening the file directly:
+
+```bash
+cd "One Piece Project"
+python3 -m http.server 8000
+# open http://localhost:8000
+```
+
+No install needed. MediaPipe loads from a CDN.
