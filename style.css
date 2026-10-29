@@ -25,37 +25,77 @@ html, body {
 
 #cam { display: none; }
 
+/* sunset sky over the sea */
 #start {
   position: fixed;
   inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: center;
+  background: linear-gradient(
+    #ffd77a 0%,
+    #ffa35c 38%,
+    #ff7a59 58%,
+    #2f9be0 58.5%,
+    #1667a8 78%,
+    #0b3d6b 100%
+  );
+}
+
+#fruits {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#start .card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  background: #111;
-  text-align: center;
-  padding: 16px;
+  gap: 14px;
+  max-width: 560px;
+  padding: 28px 32px;
+  background: #f6e7c8;
+  color: #3a2214;
+  border: 4px solid #3a2214;
+  border-radius: 18px;
+  box-shadow: 0 8px 0 #3a2214, 0 18px 40px rgba(0, 0, 0, 0.35);
 }
 
 #start h1 {
   margin: 0;
-  font-size: clamp(32px, 8vw, 72px);
-  color: #e63946;
-  letter-spacing: 2px;
+  font-family: 'Bangers', system-ui, sans-serif;
+  font-weight: 400;
+  font-size: clamp(40px, 10vw, 84px);
+  line-height: 1;
+  letter-spacing: 3px;
+  color: #ffd23f;
+  -webkit-text-stroke: 3px #3a2214;
+  paint-order: stroke fill;
+  text-shadow: 4px 4px 0 #e63946;
 }
 
-#start p { margin: 0; opacity: 0.8; }
+#start p { margin: 0; font-weight: 600; }
 
 #start button {
   font: inherit;
-  font-weight: 700;
-  padding: 12px 24px;
-  border: 0;
-  border-radius: 8px;
-  background: #f4c430;
-  color: #111;
+  font-family: 'Bangers', system-ui, sans-serif;
+  font-size: 26px;
+  letter-spacing: 2px;
+  padding: 10px 28px;
+  border: 3px solid #3a2214;
+  border-radius: 999px;
+  background: #e63946;
+  color: #fff;
+  box-shadow: 0 5px 0 #3a2214;
   cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
 }
 
-#start small { opacity: 0.6; min-height: 1em; }
+#start button:hover { transform: translateY(-2px); box-shadow: 0 7px 0 #3a2214; }
+#start button:active { transform: translateY(4px); box-shadow: 0 1px 0 #3a2214; }
+
+#start small { opacity: 0.75; min-height: 1em; }
