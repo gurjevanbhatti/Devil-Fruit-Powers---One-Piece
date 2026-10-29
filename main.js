@@ -5,7 +5,7 @@ import {
   ImageSegmenter,
   FilesetResolver,
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs'
-import { ARAP, easeSpring } from './arap.js'
+import { ARAP, easeSpring } from './rubber.js'
 
 const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
 const FACE_MODEL =
@@ -1013,7 +1013,7 @@ function drawMesh() {
 // ---------- finger stretch ----------
 
 // the grabbed finger's real picture is cut out (trimmed to skin colour), turned into a
-// mesh, and bent with ARAP (see arap.js) from its knuckle to your pinch. the further it
+// mesh, and bent with ARAP (see rubber.js) from its knuckle to your pinch. the further it
 // stretches the thinner and shinier it gets, and at normal length it's exactly the real
 // finger again, so it springs back without a seam
 
