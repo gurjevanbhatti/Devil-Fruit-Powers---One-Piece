@@ -32,6 +32,7 @@ html, body {
   display: grid;
   place-items: center;
   padding: 16px;
+  overflow-y: auto; /* the card can be taller than a phone screen */
   text-align: center;
   background: linear-gradient(
     #ffd77a 0%,
@@ -79,6 +80,43 @@ html, body {
 }
 
 #start p { margin: 0; font-weight: 600; }
+
+/* numbered how-to steps, each with a round red number badge */
+#start .how {
+  counter-reset: step;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+#start .how li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+#start .how li::before {
+  content: counter(step);
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid #3a2214;
+  border-radius: 50%;
+  background: #e63946;
+  color: #fff;
+  font-family: 'Bangers', system-ui, sans-serif;
+  font-size: 18px;
+  line-height: 1;
+}
 
 #start button {
   font: inherit;
