@@ -37,8 +37,8 @@ const ROWS = 60
 
 // how much of the way to its target the face moves each frame while you pull
 const FOLLOW = 0.2
-// and once you let go
-const SNAP = 0.5
+// and once you let go (1 = straight back to your normal face, no sweeping back across it)
+const SNAP = 1
 // the face itself only gets tugged this far (in grab radii). any further and the skin
 // folds over and you see it twice, so the rest of the pull is drawn as a rubber ribbon
 const TUG = 1.2
@@ -67,7 +67,6 @@ let aspect = 4 / 3
 
 // everything is in 0..1 screen coords, x is mirrored so it acts like a mirror
 const grabs = new Map() // id -> { attach, x, y, sigma }
-let shout = { text: '', t: 0 }
 
 // ---------- webgl setup ----------
 
@@ -466,8 +465,9 @@ function endGrab(id) {
   const g = grabs.get(id)
   if (!g) return
   grabs.delete(id)
-  // the ribbon keeps going on its own for a moment while it shoots back
-  if (g.ribbon) snaps.push(g.ribbon)
+  // an arm ribbon shoots back along your arm. a face one just disappears, so the
+  // stretched skin never sweeps back over your face
+  if (g.ribbon && !g.ribbon.onFace) snaps.push(g.ribbon)
   // a stretched finger springs back to where the real one is
   if (g.attach.kind === 'finger' && g.attach.finger.def) {
     const a = g.attach
@@ -683,7 +683,6 @@ function updateArms(dt) {
     const ext = Math.min(ARM_MAX, Math.max(0, st.hold - ARM_CHARGE) * ARM_SPEED)
     if (ext > 0 && !grabs.has(arm.id)) {
       grabs.set(arm.id, { attach: { kind: 'arm', arm }, x: 0, y: 0, sigma: out.fore * 0.4 })
-      shout = { text: 'GUM GUM...', t: performance.now() }
     }
     const g = grabs.get(arm.id)
     if (g) {
@@ -1351,30 +1350,6 @@ function drawHud() {
     ctx.lineWidth = h * 0.012
     ctx.strokeStyle = '#f4c430'
     ctx.stroke()
-  }
-
-  const age = performance.now() - shout.t
-  if (shout.text && age < 900) {
-    const scale = 1 + (age / 900) * 0.4
-    ctx.save()
-    ctx.globalAlpha = 1 - age / 900
-    ctx.translate(w / 2, h * 0.15)
-    ctx.scale(scale, scale)
-    ctx.font = `900 ${Math.round(h * 0.09)}px system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.lineWidth = h * 0.012
-    ctx.strokeStyle = '#111'
-    ctx.strokeText(shout.text, 0, 0)
-    ctx.fillStyle = '#f4c430'
-    ctx.fillText(shout.text, 0, 0)
-    ctx.restore()
-  }
-
-  if (faceLandmarker && !face) {
-    ctx.font = `${Math.round(h * 0.035)}px system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.fillStyle = 'rgba(255,255,255,0.8)'
-    ctx.fillText("can't see your face", w / 2, h * 0.95)
   }
 }
 

@@ -8,7 +8,7 @@ Stretch your face and body like Luffy, live on your webcam.
 - **Pinch a fingertip of your other hand** and pull. That finger stretches out from its knuckle like rubber.
 - Or **click and drag** any part of yourself with the mouse (or your finger on a phone).
 - **Hold an arm out straight** for about a second. A yellow ring fills up around your hand, then your hand shoots outward and your arm stretches. Drop your arm to snap it back.
-- A rubbery tube of your skin stretches from where you grabbed to your fingers. Let go and it shoots back into you.
+- A rubbery tube of your skin stretches from where you grabbed to your fingers. Let go and your face goes straight back to normal.
 
 Only you stretch. You can't grab the background.
 
