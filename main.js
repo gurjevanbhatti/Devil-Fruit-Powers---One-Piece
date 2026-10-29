@@ -303,6 +303,7 @@ function anchor(g) {
     const [bx, by] = bonePoint(a.bone)
     return [bx + a.ox, by + a.oy]
   }
+  if (a.kind === 'arm' && pose) return handPoint(a.arm)
   if (a.kind === 'fixed') return [a.ox, a.oy]
   return [g.x, g.y] // lost tracking, just go slack
 }
@@ -359,6 +360,79 @@ function updateHands(result) {
   }
 }
 
+// ---------- arm stretch ----------
+
+// hold an arm out straight for a bit and the hand shoots out like rubber
+const ARMS = [
+  { id: 'armL', shoulder: 11, elbow: 13, wrist: 15, index: 19 },
+  { id: 'armR', shoulder: 12, elbow: 14, wrist: 16, index: 20 },
+]
+const ARM_CHARGE = 0.8 // seconds of holding before it starts to stretch
+const ARM_SPEED = 0.5 // how fast it grows, in screen heights per second
+const ARM_MAX = 0.6
+const ARM_GRACE = 0.25 // seconds tracking can drop out without cancelling
+const armState = ARMS.map(() => ({ hold: 0, lost: 0, hand: null }))
+
+function handPoint(arm) {
+  const W = pose[arm.wrist]
+  const I = pose[arm.index]
+  return [(W.x + I.x) / 2, (W.y + I.y) / 2]
+}
+
+function armOut(arm) {
+  if (!pose) return null
+  const S = pose[arm.shoulder]
+  const E = pose[arm.elbow]
+  const W = pose[arm.wrist]
+  if (S.visibility < 0.5 || E.visibility < 0.5 || W.visibility < 0.5) return null
+  const ux = (E.x - S.x) * aspect
+  const uy = E.y - S.y
+  const fx = (W.x - E.x) * aspect
+  const fy = W.y - E.y
+  const upper = Math.hypot(ux, uy)
+  const fore = Math.hypot(fx, fy)
+  if (!upper || !fore) return null
+  // the elbow is straight when the upper arm and forearm point the same way
+  const straight = (ux * fx + uy * fy) / (upper * fore)
+  const dx = ux + fx
+  const dy = uy + fy
+  const len = Math.hypot(dx, dy)
+  // an arm hanging down by your side is straight too, so skip those
+  if (straight < 0.9 || dy / len > 0.5) return null
+  return { dx: dx / len, dy: dy / len, fore }
+}
+
+function updateArms(dt) {
+  ARMS.forEach((arm, i) => {
+    const st = armState[i]
+    const out = armOut(arm)
+    st.hand = pose ? handPoint(arm) : null
+
+    if (!out) {
+      st.lost += dt
+      if (st.lost > ARM_GRACE) {
+        st.hold = 0
+        endGrab(arm.id)
+      }
+      return
+    }
+    st.lost = 0
+    st.hold += dt
+
+    const ext = Math.min(ARM_MAX, Math.max(0, st.hold - ARM_CHARGE) * ARM_SPEED)
+    if (ext > 0 && !grabs.has(arm.id)) {
+      grabs.set(arm.id, { attach: { kind: 'arm', arm }, x: 0, y: 0, sigma: out.fore * 0.4 })
+      shout = { text: 'GUM GUM...', t: performance.now() }
+    }
+    const g = grabs.get(arm.id)
+    if (g) {
+      const [hx, hy] = st.hand
+      g.x = hx + (out.dx * ext) / aspect
+      g.y = hy + out.dy * ext
+    }
+  })
+}
+
 // ---------- physics ----------
 
 function step() {
@@ -367,16 +441,31 @@ function step() {
     const dx = g.x - ax
     const dy = g.y - ay
     maxStretch = Math.max(maxStretch, Math.hypot(dx * aspect, dy))
-    return { ax, ay, dx, dy, s2: 2 * g.sigma * g.sigma }
+    // arm stretches ramp up from the shoulder so the whole arm stretches, not just the hand
+    const root = g.attach.kind === 'arm' && pose ? pose[g.attach.arm.shoulder] : null
+    const rx = root ? (ax - root.x) * aspect : 0
+    const ry = root ? ay - root.y : 0
+    return { ax, ay, dx, dy, s2: 2 * g.sigma * g.sigma, root, rx, ry, rlen2: rx * rx + ry * ry || 1 }
   })
 
   for (let i = 0; i < vertCount * 2; i += 2) {
     let tx = 0
     let ty = 0
     for (const a of active) {
-      const ddx = (rest[i] - a.ax) * aspect
-      const ddy = rest[i + 1] - a.ay
-      const w = Math.exp(-(ddx * ddx + ddy * ddy) / a.s2)
+      let cx = a.ax
+      let cy = a.ay
+      let ramp = 1
+      if (a.root) {
+        // closest point on the shoulder -> hand line, and how far along it we are
+        const px = (rest[i] - a.root.x) * aspect
+        const py = rest[i + 1] - a.root.y
+        ramp = Math.max(0, Math.min(1, (px * a.rx + py * a.ry) / a.rlen2))
+        cx = a.root.x + (a.ax - a.root.x) * ramp
+        cy = a.root.y + (a.ay - a.root.y) * ramp
+      }
+      const ddx = (rest[i] - cx) * aspect
+      const ddy = rest[i + 1] - cy
+      const w = ramp * Math.exp(-(ddx * ddx + ddy * ddy) / a.s2)
       tx += a.dx * w
       ty += a.dy * w
     }
@@ -399,6 +488,16 @@ function drawHud() {
     ctx.arc(p.x * w, p.y * h, p.isPinch ? 10 : 6, 0, Math.PI * 2)
     ctx.fillStyle = p.isPinch ? '#e63946' : 'rgba(255,255,255,0.6)'
     ctx.fill()
+  }
+
+  // charge ring around the hand while you hold your arm out
+  for (const st of armState) {
+    if (!st.hand || st.hold < 0.15 || st.hold > ARM_CHARGE) continue
+    ctx.beginPath()
+    ctx.arc(st.hand[0] * w, st.hand[1] * h, h * 0.05, -Math.PI / 2, -Math.PI / 2 + (st.hold / ARM_CHARGE) * Math.PI * 2)
+    ctx.lineWidth = h * 0.012
+    ctx.strokeStyle = '#f4c430'
+    ctx.stroke()
   }
 
   const age = performance.now() - shout.t
@@ -427,9 +526,12 @@ function drawHud() {
 }
 
 let lastVideoTime = -1
+let lastLoop = performance.now()
 
 function loop() {
   const now = performance.now()
+  const dt = Math.min(0.1, (now - lastLoop) / 1000)
+  lastLoop = now
 
   if (video.currentTime !== lastVideoTime && video.readyState >= 2) {
     lastVideoTime = video.currentTime
@@ -444,6 +546,7 @@ function loop() {
     if (handLandmarker) updateHands(handLandmarker.detectForVideo(video, now))
   }
 
+  updateArms(dt)
   step()
 
   gl.bindTexture(gl.TEXTURE_2D, tex)
