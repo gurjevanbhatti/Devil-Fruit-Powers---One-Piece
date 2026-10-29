@@ -34,9 +34,9 @@ const RIGHT_ARM = [14, 16, 18, 20, 22]
 const COLS = 80
 const ROWS = 60
 
-// spring tuning. lower damping = more wobble when you let go
-const STIFFNESS = 0.16
-const DAMPING = 0.84
+// how much of the way to its target the skin moves each frame. no springs, so it slides
+// back into place when you let go instead of wobbling past your face
+const FOLLOW = 0.2
 
 const video = document.getElementById('cam')
 const glCanvas = document.getElementById('gl')
@@ -99,7 +99,6 @@ gl.useProgram(prog)
 const vertCount = (COLS + 1) * (ROWS + 1)
 const rest = new Float32Array(vertCount * 2)
 const offset = new Float32Array(vertCount * 2)
-const vel = new Float32Array(vertCount * 2)
 
 for (let r = 0; r <= ROWS; r++) {
   for (let c = 0; c <= COLS; c++) {
@@ -483,10 +482,8 @@ function step() {
       tx += a.dx * w
       ty += a.dy * w
     }
-    vel[i] = (vel[i] + (tx - offset[i]) * STIFFNESS) * DAMPING
-    vel[i + 1] = (vel[i + 1] + (ty - offset[i + 1]) * STIFFNESS) * DAMPING
-    offset[i] += vel[i]
-    offset[i + 1] += vel[i + 1]
+    offset[i] += (tx - offset[i]) * FOLLOW
+    offset[i + 1] += (ty - offset[i + 1]) * FOLLOW
   }
 }
 
