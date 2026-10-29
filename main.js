@@ -55,8 +55,6 @@ let aspect = 4 / 3
 
 // everything is in 0..1 screen coords, x is mirrored so it acts like a mirror
 const grabs = new Map() // id -> { attach, x, y, sigma }
-let maxStretch = 0
-let shout = { text: '', t: 0 }
 
 // ---------- webgl setup ----------
 
@@ -288,11 +286,6 @@ function moveGrab(id, x, y) {
 function endGrab(id) {
   if (!grabs.has(id)) return
   grabs.delete(id)
-  if (grabs.size === 0) {
-    if (maxStretch > 0.35) shout = { text: 'PISTOL!!', t: performance.now() }
-    else if (maxStretch > 0.15) shout = { text: 'boing', t: performance.now() }
-    maxStretch = 0
-  }
 }
 
 function anchor(g) {
@@ -422,7 +415,6 @@ function updateArms(dt) {
     const ext = Math.min(ARM_MAX, Math.max(0, st.hold - ARM_CHARGE) * ARM_SPEED)
     if (ext > 0 && !grabs.has(arm.id)) {
       grabs.set(arm.id, { attach: { kind: 'arm', arm }, x: 0, y: 0, sigma: out.fore * 0.4 })
-      shout = { text: 'GUM GUM...', t: performance.now() }
     }
     const g = grabs.get(arm.id)
     if (g) {
@@ -440,7 +432,6 @@ function step() {
     const [ax, ay] = anchor(g)
     const dx = g.x - ax
     const dy = g.y - ay
-    maxStretch = Math.max(maxStretch, Math.hypot(dx * aspect, dy))
     // arm stretches ramp up from the shoulder so the whole arm stretches, not just the hand
     const root = g.attach.kind === 'arm' && pose ? pose[g.attach.arm.shoulder] : null
     const rx = root ? (ax - root.x) * aspect : 0
@@ -498,30 +489,6 @@ function drawHud() {
     ctx.lineWidth = h * 0.012
     ctx.strokeStyle = '#f4c430'
     ctx.stroke()
-  }
-
-  const age = performance.now() - shout.t
-  if (shout.text && age < 900) {
-    const scale = 1 + (age / 900) * 0.4
-    ctx.save()
-    ctx.globalAlpha = 1 - age / 900
-    ctx.translate(w / 2, h * 0.15)
-    ctx.scale(scale, scale)
-    ctx.font = `900 ${Math.round(h * 0.09)}px system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.lineWidth = h * 0.012
-    ctx.strokeStyle = '#111'
-    ctx.strokeText(shout.text, 0, 0)
-    ctx.fillStyle = '#f4c430'
-    ctx.fillText(shout.text, 0, 0)
-    ctx.restore()
-  }
-
-  if (faceLandmarker && !face) {
-    ctx.font = `${Math.round(h * 0.035)}px system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.fillStyle = 'rgba(255,255,255,0.8)'
-    ctx.fillText("can't see your face", w / 2, h * 0.95)
   }
 }
 

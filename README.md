@@ -7,7 +7,7 @@ Stretch your face and body like Luffy, live on your webcam.
 - **Pinch** your cheek, the corner of your mouth, your arm or your neck with your thumb and index finger and pull your hand away.
 - Or **click and drag** any part of yourself with the mouse (or your finger on a phone).
 - **Hold an arm out straight** for about a second. A yellow ring fills up around your hand, then your hand shoots outward and your arm stretches. Drop your arm to snap it back.
-- Let go and it snaps back and wobbles. Pull far enough and you get a **PISTOL!!**
+- Let go and it snaps back and wobbles.
 
 Only you stretch. You can't grab the background.
 
