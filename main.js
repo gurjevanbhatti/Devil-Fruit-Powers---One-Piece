@@ -5,6 +5,7 @@ import {
   ImageSegmenter,
   FilesetResolver,
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs'
+import { ARAP, easeSpring } from './arap.js'
 
 const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
 const FACE_MODEL =
@@ -467,6 +468,11 @@ function endGrab(id) {
   grabs.delete(id)
   // the ribbon keeps going on its own for a moment while it shoots back
   if (g.ribbon) snaps.push(g.ribbon)
+  // a stretched finger springs back to where the real one is
+  if (g.attach.kind === 'finger' && g.attach.finger.def) {
+    const a = g.attach
+    fingerSnaps.push({ a, from: a.finger.target, start: performance.now() })
+  }
 }
 
 function anchor(g) {
@@ -505,10 +511,10 @@ let hands = [] // every hand this frame, mirrored to screen space
 
 // fingertip -> its knuckle, the stretched finger roots at the knuckle
 const FINGERS = [
-  { tipIdx: 8, mcpIdx: 5 },
-  { tipIdx: 12, mcpIdx: 9 },
-  { tipIdx: 16, mcpIdx: 13 },
-  { tipIdx: 20, mcpIdx: 17 },
+  { tipIdx: 8, mcpIdx: 5, chain: [5, 6, 7, 8] },
+  { tipIdx: 12, mcpIdx: 9, chain: [9, 10, 11, 12] },
+  { tipIdx: 16, mcpIdx: 13, chain: [13, 14, 15, 16] },
+  { tipIdx: 20, mcpIdx: 17, chain: [17, 18, 19, 20] },
 ]
 
 function fingerWidth(hand) {
@@ -534,18 +540,19 @@ function grabFinger(id, x, y, h) {
   })
   if (!best) return false
   const { hand, f } = best
-  grabs.set(id, {
-    attach: {
-      kind: 'finger',
-      ...f,
-      mcp: [hand[f.mcpIdx].x, hand[f.mcpIdx].y],
-      tipAt: [hand[f.tipIdx].x, hand[f.tipIdx].y],
-      width: fingerWidth(hand),
-    },
-    x,
-    y,
-    sigma: 0,
-  })
+  const attach = {
+    kind: 'finger',
+    ...f,
+    hand,
+    mcp: [hand[f.mcpIdx].x, hand[f.mcpIdx].y],
+    width: fingerWidth(hand),
+  }
+  attach.finger = buildFinger(attach)
+  if (!attach.finger) return false
+  // start the pull exactly where the fingertip is, so it doesn't jump to your pinch
+  const [tx, ty] = attach.finger.rest[attach.finger.tipV]
+  attach.pinchOffset = [tx - x * aspect, ty - y]
+  grabs.set(id, { attach, x, y, sigma: 0 })
   return true
 }
 
@@ -562,8 +569,8 @@ function trackFinger(a, grabber) {
     }
   })
   if (!best) return
+  a.hand = best
   a.mcp = [best[a.mcpIdx].x, best[a.mcpIdx].y]
-  a.tipAt = [best[a.tipIdx].x, best[a.tipIdx].y]
   a.width = fingerWidth(best)
 }
 
@@ -722,30 +729,18 @@ function armRibbon(g) {
   }
 }
 
-function fingerRibbon(g) {
-  // the real finger, from its knuckle out to where you're pulling it
-  const f = g.attach
-  return {
-    a: [...f.mcp],
-    b: [g.x, g.y],
-    srcA: [...f.mcp],
-    srcB: [...f.tipAt],
-    w: f.width,
-    srcW: f.width * 0.9,
-    taper: 0.2,
-    aHome: [...f.mcp],
-    bHome: [...f.tipAt],
-    erase: { from: f.mcp, to: f.tipAt, w: f.width * 1.3 },
-  }
-}
-
 function step() {
   const active = []
   ribbons = []
 
   for (const g of grabs.values()) {
-    if (g.attach.kind === 'arm' || g.attach.kind === 'finger') {
-      g.ribbon = g.attach.kind === 'arm' ? armRibbon(g) : fingerRibbon(g)
+    if (g.attach.kind === 'finger') {
+      const a = g.attach
+      updateFinger(a, [g.x * aspect + a.pinchOffset[0], g.y + a.pinchOffset[1]])
+      continue
+    }
+    if (g.attach.kind === 'arm') {
+      g.ribbon = armRibbon(g)
       if (g.ribbon) ribbons.push(g.ribbon)
       continue
     }
@@ -807,6 +802,22 @@ function step() {
     }
     if (Math.hypot((r.b[0] - r.bHome[0]) * aspect, r.b[1] - r.bHome[1]) < 0.004) snaps.splice(k, 1)
   }
+
+  // let go fingers spring back onto the real finger, then the real one takes over
+  const now = performance.now()
+  for (let k = fingerSnaps.length - 1; k >= 0; k--) {
+    const sn = fingerSnaps[k]
+    const t = (now - sn.start) / 1000 / FINGER_SNAP_TIME
+    if (t >= 1) {
+      freeFinger(sn.a.finger)
+      fingerSnaps.splice(k, 1)
+      continue
+    }
+    trackFinger(sn.a, -1)
+    const home = fingerHome(sn.a)
+    const e = easeSpring(t)
+    updateFinger(sn.a, [sn.from[0] + (home[0] - sn.from[0]) * e, sn.from[1] + (home[1] - sn.from[1]) * e])
+  }
 }
 
 // across the ribbon: where each column sits (-1 to 1 edge to edge) and how bright it is.
@@ -825,6 +836,15 @@ function ribbonVerts(r, out) {
   const len = Math.hypot(dx, dy)
   if (len < 0.01) return
 
+  // how far past its normal length it is. like the finger, the rubber effects (curve,
+  // thinning, taper, shading) all scale with this, so as it comes back it turns back
+  // into exactly the skin it came from instead of popping
+  const sdx = (r.srcB[0] - r.srcA[0]) * aspect
+  const sdy = r.srcB[1] - r.srcA[1]
+  const slen = Math.hypot(sdx, sdy)
+  const stretch = Math.max(0, len - slen)
+  const amt = Math.min(1, stretch / (2 * r.w))
+
   // bend it into a curve that sags downward like heavy rubber
   let nx = -dy / len
   let ny = dx / len
@@ -832,7 +852,7 @@ function ribbonVerts(r, out) {
     nx = -nx
     ny = -ny
   }
-  const bow = Math.min(len * 0.12, 0.08)
+  const bow = Math.min(stretch * 0.12, 0.08)
   const mx = (r.a[0] + r.b[0]) / 2 + (nx * bow) / aspect
   const my = (r.a[1] + r.b[1]) / 2 + ny * bow
   const curve = (t) => {
@@ -841,14 +861,11 @@ function ribbonVerts(r, out) {
   }
 
   // across the source skin. a face grab samples one slice of skin, so it streaks like rubber
-  const sdx = (r.srcB[0] - r.srcA[0]) * aspect
-  const sdy = r.srcB[1] - r.srcA[1]
-  const slen = Math.hypot(sdx, sdy)
   const spx = slen > 0.001 ? -sdy / slen : -dy / len
   const spy = slen > 0.001 ? sdx / slen : dx / len
 
   // the longer it gets the thinner it gets, like real rubber
-  const thin = 1 / (1 + len)
+  const thin = 1 / (1 + stretch)
 
   const rows = []
   for (let j = 0; j <= RIBBON_SEGS; j++) {
@@ -863,7 +880,7 @@ function ribbonVerts(r, out) {
     const px = -ty / tl
     const py = tx / tl
     // tapers toward your fingers and pinches in a bit in the middle
-    const half = 0.5 * r.w * thin * (1 - (r.taper ?? 0.55) * t) * (1 - 0.15 * Math.sin(Math.PI * t))
+    const half = 0.5 * r.w * thin * (1 - (r.taper ?? 0.55) * amt * t) * (1 - 0.15 * amt * Math.sin(Math.PI * t))
     const sx = r.srcA[0] + (r.srcB[0] - r.srcA[0]) * t
     const sy = r.srcA[1] + (r.srcB[1] - r.srcA[1]) * t
     const sHalf = 0.5 * r.srcW
@@ -873,7 +890,7 @@ function ribbonVerts(r, out) {
         cy + py * half * side,
         sx + (spx * sHalf * side) / aspect,
         sy + spy * sHalf * side,
-        shade,
+        1 + (shade - 1) * amt,
       ]),
     )
   }
@@ -912,6 +929,7 @@ function eraseVerts(e, out) {
 function drawErase() {
   const hole = []
   for (const r of [...ribbons, ...snaps]) if (r.erase) eraseVerts(r.erase, hole)
+  for (const a of activeFingers()) for (const e of fingerHoles(a)) eraseVerts(e, hole)
   if (!hole.length) return
   if (!pyramid || pyramid.aspect !== aspect) buildPyramid()
 
@@ -992,6 +1010,325 @@ function drawMesh() {
   gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
 }
 
+// ---------- finger stretch ----------
+
+// the grabbed finger's real picture is cut out (trimmed to skin colour), turned into a
+// mesh, and bent with ARAP (see arap.js) from its knuckle to your pinch. the further it
+// stretches the thinner and shinier it gets, and at normal length it's exactly the real
+// finger again, so it springs back without a seam
+
+const FINGER_ROWS = 14 // mesh rows along the finger
+const FINGER_COLS = 5 // and across it
+const FINGER_THIN = 0.15 // how much it narrows when stretched
+const FINGER_SHINE = 0.2 // how much it shines when stretched (capped at 0.25)
+const FINGER_SNAP_TIME = 0.3 // seconds to spring back
+const SKIN_TOLERANCE = 22 // how close in colour (YCrCb) a pixel must be to count as finger
+const MASK_WIDTH = 640 // the skin cut-out is worked out at this size
+
+const fingerSnaps = [] // { a, from, start }
+
+const fingerVert = `
+attribute vec2 pos;
+attribute vec2 src;
+attribute float across;
+varying vec2 uv;
+varying float vAcross;
+void main() {
+  uv = vec2(1.0 - src.x, src.y);
+  vAcross = across;
+  gl_Position = vec4(pos.x * 2.0 - 1.0, 1.0 - pos.y * 2.0, 0.0, 1.0);
+}`
+
+const fingerFrag = `
+precision mediump float;
+uniform sampler2D snap;
+uniform sampler2D mask;
+uniform float shine;
+varying vec2 uv;
+varying float vAcross;
+void main() {
+  float a = texture2D(mask, uv).r;
+  if (a < 0.02) discard;
+  vec3 c = texture2D(snap, uv).rgb;
+  // a soft shiny band a little off center, brightening the skin without going white
+  float band = exp(-pow((vAcross - 0.25) / 0.22, 2.0));
+  gl_FragColor = vec4(min(c * (1.0 + shine * band), vec3(1.0)), a);
+}`
+
+const fingerProg = gl.createProgram()
+gl.attachShader(fingerProg, compile(gl.VERTEX_SHADER, fingerVert))
+gl.attachShader(fingerProg, compile(gl.FRAGMENT_SHADER, fingerFrag))
+gl.linkProgram(fingerProg)
+const fingerLocs = ['pos', 'src', 'across'].map((n) => gl.getAttribLocation(fingerProg, n))
+const fingerU = {
+  snap: gl.getUniformLocation(fingerProg, 'snap'),
+  mask: gl.getUniformLocation(fingerProg, 'mask'),
+  shine: gl.getUniformLocation(fingerProg, 'shine'),
+}
+const fingerBuf = gl.createBuffer()
+
+const maskCanvas = document.createElement('canvas')
+const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })
+
+// points are kept in "iso" space: screen x times aspect, so distances are the same both ways
+const iso = (p) => [p.x * aspect, p.y]
+
+function chainPoints(a) {
+  return a.chain.map((i) => iso(a.hand[i]))
+}
+
+function distToChain(x, y, P) {
+  let best = Infinity
+  for (let i = 0; i < P.length - 1; i++) {
+    const [ax, ay] = P[i]
+    const bx = P[i + 1][0] - ax
+    const by = P[i + 1][1] - ay
+    const t = Math.max(0, Math.min(1, ((x - ax) * bx + (y - ay) * by) / (bx * bx + by * by || 1)))
+    best = Math.min(best, Math.hypot(x - ax - bx * t, y - ay - by * t))
+  }
+  return best
+}
+
+function makeTexture() {
+  const t = gl.createTexture()
+  gl.bindTexture(gl.TEXTURE_2D, t)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  return t
+}
+
+function skinMask(P, r) {
+  // which pixels near the finger are actually finger: inside the landmark capsule, and
+  // the same skin colour as the middle of the finger (so the wall beside it is left out)
+  const W = MASK_WIDTH
+  const H = Math.round(MASK_WIDTH / aspect)
+  maskCanvas.width = W
+  maskCanvas.height = H
+  maskCtx.drawImage(video, 0, 0, W, H)
+  const out = new Uint8Array(W * H)
+
+  // the area around the finger, in mask pixels (the video isn't mirrored, the screen is)
+  const xs = P.map((p) => p[0] / aspect)
+  const ys = P.map((p) => p[1])
+  const pad = r / aspect + 2 / W
+  const x0 = Math.max(0, Math.floor((1 - Math.max(...xs) - pad) * W))
+  const x1 = Math.min(W, Math.ceil((1 - Math.min(...xs) + pad) * W))
+  const y0 = Math.max(0, Math.floor((Math.min(...ys) - r - 2 / H) * H))
+  const y1 = Math.min(H, Math.ceil((Math.max(...ys) + r + 2 / H) * H))
+  if (x1 <= x0 || y1 <= y0) return { out, W, H }
+  const px = maskCtx.getImageData(x0, y0, x1 - x0, y1 - y0).data
+
+  const inside = []
+  const crs = []
+  const cbs = []
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const d = distToChain((1 - (x + 0.5) / W) * aspect, (y + 0.5) / H, P)
+      if (d >= r) continue
+      const i = ((y - y0) * (x1 - x0) + (x - x0)) * 4
+      const R = px[i]
+      const G = px[i + 1]
+      const B = px[i + 2]
+      const Y = 0.299 * R + 0.587 * G + 0.114 * B
+      const cr = (R - Y) * 0.713 + 128
+      const cb = (B - Y) * 0.564 + 128
+      inside.push([y * W + x, cr, cb])
+      if (d < r * 0.5) {
+        crs.push(cr)
+        cbs.push(cb)
+      }
+    }
+  }
+  const median = (v) => v.sort((a, b) => a - b)[v.length >> 1] ?? 128
+  const cr0 = median(crs)
+  const cb0 = median(cbs)
+  let kept = 0
+  for (const [i, cr, cb] of inside) {
+    if (Math.abs(cr - cr0) <= SKIN_TOLERANCE && Math.abs(cb - cb0) <= SKIN_TOLERANCE) {
+      out[i] = 255
+      kept++
+    }
+  }
+  // if the colour check threw most of it away it probably went wrong, so just use the capsule
+  if (kept < inside.length * 0.22) for (const [i] of inside) out[i] = 255
+  return { out, W, H }
+}
+
+function buildFinger(a) {
+  const P = chainPoints(a)
+  const r = a.width * 0.95 * 0.5
+  const segs = P.slice(1).map((p, i) => Math.hypot(p[0] - P[i][0], p[1] - P[i][1]))
+  const fingerLen = segs.reduce((s, l) => s + l, 0)
+  if (fingerLen < 0.01) return null
+  const total = fingerLen + r * 0.8 // a little past the fingertip for the rounded end
+
+  // a point along the finger, carrying on straight past the tip
+  const along = (d) => {
+    for (let i = 0; i < segs.length; i++) {
+      if (d <= segs[i] || i === segs.length - 1) {
+        const t = d / (segs[i] || 1)
+        return [P[i][0] + (P[i + 1][0] - P[i][0]) * t, P[i][1] + (P[i + 1][1] - P[i][1]) * t]
+      }
+      d -= segs[i]
+    }
+  }
+
+  const rest = []
+  const across = []
+  const half = r * 1.3 // wider than the finger, the skin cut-out decides the real edge
+  for (let i = 0; i < FINGER_ROWS; i++) {
+    const d = (i / (FINGER_ROWS - 1)) * total
+    const [cx, cy] = along(d)
+    const [ax, ay] = along(Math.max(0, d - total * 0.05))
+    const [bx, by] = along(Math.min(total, d + total * 0.05))
+    const l = Math.hypot(bx - ax, by - ay) || 1
+    const nx = -(by - ay) / l
+    const ny = (bx - ax) / l
+    for (let c = 0; c < FINGER_COLS; c++) {
+      const side = -1 + (2 * c) / (FINGER_COLS - 1)
+      rest.push([cx + nx * half * side, cy + ny * half * side])
+      across.push(side)
+    }
+  }
+  const tris = []
+  for (let i = 0; i < FINGER_ROWS - 1; i++) {
+    for (let c = 0; c < FINGER_COLS - 1; c++) {
+      const v = i * FINGER_COLS + c
+      tris.push([v, v + 1, v + FINGER_COLS], [v + 1, v + FINGER_COLS + 1, v + FINGER_COLS])
+    }
+  }
+  // the knuckle end stays pinned to your hand, the fingertip end is what you pull
+  const anchors = [...Array(2 * FINGER_COLS).keys()]
+  const tipV = (FINGER_ROWS - 1) * FINGER_COLS + (FINGER_COLS >> 1)
+
+  const snap = makeTexture()
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video)
+  const m = skinMask(P, r)
+  const mask = makeTexture()
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, m.W, m.H, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, m.out)
+  gl.bindTexture(gl.TEXTURE_2D, tex)
+
+  return {
+    rest,
+    across,
+    tris,
+    anchors,
+    tipV,
+    solver: new ARAP(rest, tris, [...anchors, tipV]),
+    knuckle0: P[0],
+    natural: Math.hypot(rest[tipV][0] - P[0][0], rest[tipV][1] - P[0][1]),
+    snap,
+    mask,
+    def: null,
+    target: null,
+    stretch: 0,
+    shine: 0,
+  }
+}
+
+function freeFinger(F) {
+  gl.deleteTexture(F.snap)
+  gl.deleteTexture(F.mask)
+}
+
+// where the fingertip end of the mesh would be with the finger at rest, following your hand
+function fingerHome(a) {
+  const F = a.finger
+  const [kx, ky] = iso(a.hand[a.mcpIdx])
+  return [F.rest[F.tipV][0] + kx - F.knuckle0[0], F.rest[F.tipV][1] + ky - F.knuckle0[1]]
+}
+
+function updateFinger(a, target) {
+  const F = a.finger
+  const [kx, ky] = iso(a.hand[a.mcpIdx])
+  const dx = kx - F.knuckle0[0]
+  const dy = ky - F.knuckle0[1]
+  const targets = new Map(F.anchors.map((v) => [v, [F.rest[v][0] + dx, F.rest[v][1] + dy]]))
+  targets.set(F.tipV, target)
+  const def = F.solver.solve(targets)
+
+  // how far past its normal length it is (0 = normal). drives the thinning and shine,
+  // so both fade away by themselves as it springs back
+  const amt = Math.max(0, Math.min(2, Math.hypot(target[0] - kx, target[1] - ky) / F.natural - 1))
+  const thin = FINGER_THIN * amt
+  if (thin > 0) {
+    const ax = target[0] - kx
+    const ay = target[1] - ky
+    const L2 = ax * ax + ay * ay || 1
+    const pinned = new Set([...F.anchors, F.tipV])
+    def.forEach((p, i) => {
+      if (pinned.has(i)) return
+      // pull it toward the knuckle -> pinch line
+      const t = ((p[0] - kx) * ax + (p[1] - ky) * ay) / L2
+      p[0] += (kx + ax * t - p[0]) * thin
+      p[1] += (ky + ay * t - p[1]) * thin
+    })
+  }
+  F.def = def
+  F.target = target
+  F.shine = Math.min(0.25, FINGER_SHINE * amt)
+  // how far the tip is from where the real one is, for fading the fill in and out
+  const [hx, hy] = fingerHome(a)
+  F.stretch = Math.hypot(target[0] - hx, target[1] - hy) / F.natural
+}
+
+function activeFingers() {
+  const list = []
+  for (const g of grabs.values()) if (g.attach.kind === 'finger' && g.attach.finger.def) list.push(g.attach)
+  for (const sn of fingerSnaps) list.push(sn.a)
+  return list
+}
+
+function fingerHoles(a) {
+  // cover the real finger with background, but only once it's actually moved away,
+  // so there's no blurry halo when it's back in place
+  const fade = Math.min(1, a.finger.stretch * 5)
+  if (fade <= 0) return []
+  const P = a.chain.map((i) => [a.hand[i].x, a.hand[i].y])
+  return P.slice(1).map((p, i) => ({ from: P[i], to: p, w: a.width * 1.3 * fade }))
+}
+
+function drawFingers() {
+  const list = activeFingers()
+  if (!list.length) return
+  gl.useProgram(fingerProg)
+  gl.disable(gl.DEPTH_TEST)
+  gl.enable(gl.BLEND)
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+  for (const loc of fingerLocs) gl.enableVertexAttribArray(loc)
+  gl.uniform1i(fingerU.snap, 0)
+  gl.uniform1i(fingerU.mask, 1)
+
+  for (const a of list) {
+    const F = a.finger
+    const out = []
+    for (const t of F.tris) {
+      for (const v of t) {
+        out.push(F.def[v][0] / aspect, F.def[v][1], F.rest[v][0] / aspect, F.rest[v][1], F.across[v])
+      }
+    }
+    bindTex(0, F.snap)
+    bindTex(1, F.mask)
+    gl.uniform1f(fingerU.shine, F.shine)
+    gl.bindBuffer(gl.ARRAY_BUFFER, fingerBuf)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STREAM_DRAW)
+    const [pos, src, across] = fingerLocs
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 20, 0)
+    gl.vertexAttribPointer(src, 2, gl.FLOAT, false, 20, 8)
+    gl.vertexAttribPointer(across, 1, gl.FLOAT, false, 20, 16)
+    gl.drawArrays(gl.TRIANGLES, 0, out.length / 5)
+  }
+
+  for (const loc of fingerLocs) gl.disableVertexAttribArray(loc)
+  gl.disable(gl.BLEND)
+  gl.enable(gl.DEPTH_TEST)
+  bindTex(1, null)
+  bindTex(0, tex)
+}
+
 // ---------- drawing ----------
 
 function drawHud() {
@@ -1070,6 +1407,7 @@ function loop() {
   drawMesh()
   drawErase()
   drawRibbons()
+  drawFingers()
 
   drawHud()
   requestAnimationFrame(loop)
