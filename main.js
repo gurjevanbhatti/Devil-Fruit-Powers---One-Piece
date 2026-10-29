@@ -34,9 +34,20 @@ const RIGHT_ARM = [14, 16, 18, 20, 22]
 const COLS = 80
 const ROWS = 60
 
-// how much of the way to its target the skin moves each frame. no springs, so it slides
-// back into place when you let go instead of wobbling past your face
+// how much of the way to its target the face moves each frame while you pull
 const FOLLOW = 0.2
+// and once you let go
+const SNAP = 0.5
+// the face itself only gets tugged this far (in grab radii). any further and the skin
+// folds over and you see it twice, so the rest of the pull is drawn as a rubber ribbon
+const TUG = 1.2
+// how fast a ribbon shoots back when you let go, and how smooth it is
+const RIBBON_SNAP = 0.45
+const RIBBON_SEGS = 24
+// pinch near a fingertip of your other hand (this close, in screen heights) to stretch that finger
+const FINGER_REACH = 0.07
+// how much of the way the pinch point moves toward your real pinch each frame. lower = smoother
+const PINCH_SMOOTH = 0.5
 
 const video = document.getElementById('cam')
 const glCanvas = document.getElementById('gl')
@@ -55,7 +66,6 @@ let aspect = 4 / 3
 
 // everything is in 0..1 screen coords, x is mirrored so it acts like a mirror
 const grabs = new Map() // id -> { attach, x, y, sigma }
-let maxStretch = 0
 let shout = { text: '', t: 0 }
 
 // ---------- webgl setup ----------
@@ -131,8 +141,10 @@ function attrib(name, data, usage) {
   return buf
 }
 
-attrib('rest', rest, gl.STATIC_DRAW)
+const restBuf = attrib('rest', rest, gl.STATIC_DRAW)
 const offsetBuf = attrib('offset', offset, gl.DYNAMIC_DRAW)
+const restLoc = gl.getAttribLocation(prog, 'rest')
+const offsetLoc = gl.getAttribLocation(prog, 'offset')
 
 const indexBuf = gl.createBuffer()
 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuf)
@@ -147,6 +159,171 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+
+// ---------- ribbon program ----------
+
+// the stretched skin is a strip drawn on top, textured with the skin where you grabbed
+const ribbonVert = `
+attribute vec2 pos;
+attribute vec2 src;
+attribute float shade;
+varying vec2 uv;
+varying float vShade;
+void main() {
+  uv = vec2(1.0 - src.x, src.y);
+  vShade = shade;
+  gl_Position = vec4(pos.x * 2.0 - 1.0, 1.0 - pos.y * 2.0, 0.0, 1.0);
+}`
+
+const ribbonFrag = `
+precision mediump float;
+uniform sampler2D tex;
+varying vec2 uv;
+varying float vShade;
+void main() {
+  gl_FragColor = vec4(texture2D(tex, uv).rgb * vShade, 1.0);
+}`
+
+const ribbonProg = gl.createProgram()
+gl.attachShader(ribbonProg, compile(gl.VERTEX_SHADER, ribbonVert))
+gl.attachShader(ribbonProg, compile(gl.FRAGMENT_SHADER, ribbonFrag))
+gl.linkProgram(ribbonProg)
+const ribbonLocs = ['pos', 'src', 'shade'].map((n) => gl.getAttribLocation(ribbonProg, n))
+const ribbonBuf = gl.createBuffer()
+
+// ---------- erase (fill) ----------
+
+// paints over where a stretched finger or arm really is, so you only see the stretched one.
+// the hole is filled like OpenCV's inpaint: the camera image is shrunk step by step
+// ignoring the hole, then grown back up filling the hole from the smaller copies, so
+// the colours all around it blend in from every side ("push-pull" fill)
+const FILL_WIDTH = 320 // the fill is smooth anyway, so it's worked out on a small copy
+
+// everything here draws shapes given in screen coords (0..1, y down)
+const fillVert = `
+attribute vec2 pos;
+varying vec2 sc;
+void main() {
+  sc = pos;
+  gl_Position = vec4(pos.x * 2.0 - 1.0, 1.0 - pos.y * 2.0, 0.0, 1.0);
+}`
+
+const fillShaders = {
+  // the camera image, as you see it on screen
+  copy: `
+precision mediump float;
+uniform sampler2D src;
+varying vec2 sc;
+void main() {
+  gl_FragColor = vec4(texture2D(src, vec2(1.0 - sc.x, sc.y)).rgb, 1.0);
+}`,
+  // cuts the hole out (alpha 0 = unknown)
+  hole: `
+precision mediump float;
+void main() {
+  gl_FragColor = vec4(0.0);
+}`,
+  // half size: one linear sample between 4 pixels averages them. colours are
+  // multiplied by alpha, so the hole doesn't darken the average
+  down: `
+precision mediump float;
+uniform sampler2D src;
+uniform vec2 srcSize;
+void main() {
+  gl_FragColor = texture2D(src, gl_FragCoord.xy * 2.0 / srcSize);
+}`,
+  // the smallest copy, turned back into plain colour
+  top: `
+precision mediump float;
+uniform sampler2D src;
+uniform vec2 size;
+void main() {
+  vec4 c = texture2D(src, gl_FragCoord.xy / size);
+  gl_FragColor = vec4(c.rgb / max(c.a, 0.004), 1.0);
+}`,
+  // keep what's known at this size, fill the rest from the filled copy one size smaller
+  up: `
+precision mediump float;
+uniform sampler2D src;
+uniform sampler2D coarse;
+uniform vec2 size;
+void main() {
+  vec4 f = texture2D(src, gl_FragCoord.xy / size);
+  vec3 c = texture2D(coarse, gl_FragCoord.xy / size).rgb;
+  gl_FragColor = vec4(f.rgb + (1.0 - f.a) * c, 1.0);
+}`,
+  // finally, paint the filled image over the hole on screen
+  paint: `
+precision mediump float;
+uniform sampler2D src;
+varying vec2 sc;
+void main() {
+  gl_FragColor = vec4(texture2D(src, vec2(sc.x, 1.0 - sc.y)).rgb, 1.0);
+}`,
+}
+
+const fill = {}
+for (const [name, frag] of Object.entries(fillShaders)) {
+  const pr = gl.createProgram()
+  gl.attachShader(pr, compile(gl.VERTEX_SHADER, fillVert))
+  gl.attachShader(pr, compile(gl.FRAGMENT_SHADER, frag))
+  gl.linkProgram(pr)
+  const uniforms = {}
+  for (const u of ['src', 'coarse', 'srcSize', 'size']) uniforms[u] = gl.getUniformLocation(pr, u)
+  fill[name] = { prog: pr, pos: gl.getAttribLocation(pr, 'pos'), u: uniforms }
+}
+const fillBuf = gl.createBuffer()
+const screenQuad = [0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1]
+
+let pyramid = null // [{ w, h, push: {tex, fb}, filled: {tex, fb} }] biggest first
+
+function makeTarget(w, h) {
+  const t = gl.createTexture()
+  gl.bindTexture(gl.TEXTURE_2D, t)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+  const fb = gl.createFramebuffer()
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb)
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0)
+  return { tex: t, fb }
+}
+
+function buildPyramid() {
+  pyramid = []
+  let w = FILL_WIDTH
+  let h = Math.max(1, Math.round(FILL_WIDTH / aspect))
+  for (;;) {
+    pyramid.push({ w, h, push: makeTarget(w, h), filled: makeTarget(w, h) })
+    if (w === 1 && h === 1) break
+    w = Math.max(1, Math.ceil(w / 2))
+    h = Math.max(1, Math.ceil(h / 2))
+  }
+  pyramid.aspect = aspect
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+}
+
+function fillPass(name, verts, target, level, setup) {
+  const f = fill[name]
+  gl.useProgram(f.prog)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null)
+  if (target) gl.viewport(0, 0, level.w, level.h)
+  else gl.viewport(0, 0, glCanvas.width, glCanvas.height)
+  setup?.(f.u)
+  gl.bindBuffer(gl.ARRAY_BUFFER, fillBuf)
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STREAM_DRAW)
+  gl.enableVertexAttribArray(f.pos)
+  gl.vertexAttribPointer(f.pos, 2, gl.FLOAT, false, 0, 0)
+  gl.drawArrays(gl.TRIANGLES, 0, verts.length / 2)
+  gl.disableVertexAttribArray(f.pos)
+}
+
+function bindTex(unit, t) {
+  gl.activeTexture(gl.TEXTURE0 + unit)
+  gl.bindTexture(gl.TEXTURE_2D, t)
+}
 
 // ---------- sizing ----------
 
@@ -285,13 +462,11 @@ function moveGrab(id, x, y) {
 }
 
 function endGrab(id) {
-  if (!grabs.has(id)) return
+  const g = grabs.get(id)
+  if (!g) return
   grabs.delete(id)
-  if (grabs.size === 0) {
-    if (maxStretch > 0.35) shout = { text: 'PISTOL!!', t: performance.now() }
-    else if (maxStretch > 0.15) shout = { text: 'boing', t: performance.now() }
-    maxStretch = 0
-  }
+  // the ribbon keeps going on its own for a moment while it shoots back
+  if (g.ribbon) snaps.push(g.ribbon)
 }
 
 function anchor(g) {
@@ -303,6 +478,7 @@ function anchor(g) {
     return [bx + a.ox, by + a.oy]
   }
   if (a.kind === 'arm' && pose) return handPoint(a.arm)
+  if (a.kind === 'finger') return a.mcp
   if (a.kind === 'fixed') return [a.ox, a.oy]
   return [g.x, g.y] // lost tracking, just go slack
 }
@@ -323,11 +499,78 @@ glCanvas.addEventListener('pointercancel', (e) => endGrab('p' + e.pointerId))
 // ---------- hand pinching ----------
 
 const pinching = [false, false]
+const smoothed = [null, null]
 let pinchPoints = []
+let hands = [] // every hand this frame, mirrored to screen space
+
+// fingertip -> its knuckle, the stretched finger roots at the knuckle
+const FINGERS = [
+  { tipIdx: 8, mcpIdx: 5 },
+  { tipIdx: 12, mcpIdx: 9 },
+  { tipIdx: 16, mcpIdx: 13 },
+  { tipIdx: 20, mcpIdx: 17 },
+]
+
+function fingerWidth(hand) {
+  // roughly the gap between neighbouring knuckles
+  let sum = 0
+  for (const [a, b] of [[5, 9], [9, 13], [13, 17]]) sum += Math.hypot((hand[a].x - hand[b].x) * aspect, hand[a].y - hand[b].y)
+  return sum / 3
+}
+
+function grabFinger(id, x, y, h) {
+  // is this pinch right on a fingertip of your other hand?
+  let best = null
+  let bestD = FINGER_REACH
+  hands.forEach((hand, o) => {
+    if (o === h) return
+    for (const f of FINGERS) {
+      const d = Math.hypot((hand[f.tipIdx].x - x) * aspect, hand[f.tipIdx].y - y)
+      if (d < bestD) {
+        bestD = d
+        best = { hand, f }
+      }
+    }
+  })
+  if (!best) return false
+  const { hand, f } = best
+  grabs.set(id, {
+    attach: {
+      kind: 'finger',
+      ...f,
+      mcp: [hand[f.mcpIdx].x, hand[f.mcpIdx].y],
+      tipAt: [hand[f.tipIdx].x, hand[f.tipIdx].y],
+      width: fingerWidth(hand),
+    },
+    x,
+    y,
+    sigma: 0,
+  })
+  return true
+}
+
+function trackFinger(a, grabber) {
+  // hands can swap order between frames, so find the grabbed finger by where its knuckle was
+  let best = null
+  let bestD = Infinity
+  hands.forEach((hand, o) => {
+    if (o === grabber) return
+    const d = Math.hypot(hand[a.mcpIdx].x - a.mcp[0], hand[a.mcpIdx].y - a.mcp[1])
+    if (d < bestD) {
+      bestD = d
+      best = hand
+    }
+  })
+  if (!best) return
+  a.mcp = [best[a.mcpIdx].x, best[a.mcpIdx].y]
+  a.tipAt = [best[a.tipIdx].x, best[a.tipIdx].y]
+  a.width = fingerWidth(best)
+}
 
 function updateHands(result) {
   pinchPoints = []
   const seen = [false, false]
+  hands = result.landmarks.map((hand) => hand.map((p) => ({ x: 1 - p.x, y: p.y })))
 
   result.landmarks.forEach((hand, h) => {
     if (h > 1) return
@@ -336,17 +579,29 @@ function updateHands(result) {
     const index = hand[8]
     const size = Math.hypot(hand[0].x - hand[9].x, hand[0].y - hand[9].y)
     const gap = Math.hypot(thumb.x - index.x, thumb.y - index.y)
-    const x = 1 - (thumb.x + index.x) / 2
-    const y = (thumb.y + index.y) / 2
+    let x = 1 - (thumb.x + index.x) / 2
+    let y = (thumb.y + index.y) / 2
 
     // a bit of hysteresis so it doesn't flicker between pinch and not pinch
     const isPinch = pinching[h] ? gap < size * 0.45 : gap < size * 0.3
     pinchPoints.push({ x, y, isPinch })
     const wrist = { x: 1 - hand[0].x, y: hand[0].y }
 
-    if (isPinch && !pinching[h]) startGrab('h' + h, x, y, wrist)
-    else if (isPinch) moveGrab('h' + h, x, y)
-    else if (pinching[h]) endGrab('h' + h)
+    // smooth the pinch point so the stretch doesn't jitter
+    if (isPinch && pinching[h] && smoothed[h]) {
+      x = smoothed[h][0] + (x - smoothed[h][0]) * PINCH_SMOOTH
+      y = smoothed[h][1] + (y - smoothed[h][1]) * PINCH_SMOOTH
+    }
+    smoothed[h] = [x, y]
+
+    const id = 'h' + h
+    if (isPinch && !pinching[h]) {
+      if (!grabFinger(id, x, y, h)) startGrab(id, x, y, wrist)
+    } else if (isPinch) {
+      moveGrab(id, x, y)
+      const g = grabs.get(id)
+      if (g?.attach.kind === 'finger') trackFinger(g.attach, h)
+    } else if (pinching[h]) endGrab(id)
     pinching[h] = isPinch
   })
 
@@ -434,57 +689,307 @@ function updateArms(dt) {
 
 // ---------- physics ----------
 
+let ribbons = [] // { onFace, a, b, srcA, srcB, w, srcW, taper, aHome, bHome, erase } in screen coords
+const snaps = [] // ribbons you let go of, shooting back
+
+function offsetAt(x, y) {
+  const c = Math.max(0, Math.min(COLS, Math.round(x * COLS)))
+  const r = Math.max(0, Math.min(ROWS, Math.round(y * ROWS)))
+  const i = (r * (COLS + 1) + c) * 2
+  return [offset[i], offset[i + 1]]
+}
+
+function armRibbon(g) {
+  // your forearm and hand, stretched out to where the hand has shot to
+  if (!pose) return null
+  const arm = g.attach.arm
+  const E = pose[arm.elbow]
+  const W = pose[arm.wrist]
+  const I = pose[arm.index]
+  const [hx, hy] = handPoint(arm)
+  const w = Math.hypot((W.x - E.x) * aspect, W.y - E.y) * 0.45
+  return {
+    a: [E.x, E.y],
+    b: [I.x + g.x - hx, I.y + g.y - hy],
+    srcA: [E.x, E.y],
+    srcB: [I.x, I.y],
+    w,
+    srcW: w,
+    taper: 0.3,
+    aHome: [E.x, E.y],
+    bHome: [I.x, I.y],
+    erase: { from: [E.x, E.y], to: [I.x, I.y], w: w * 1.6 },
+  }
+}
+
+function fingerRibbon(g) {
+  // the real finger, from its knuckle out to where you're pulling it
+  const f = g.attach
+  return {
+    a: [...f.mcp],
+    b: [g.x, g.y],
+    srcA: [...f.mcp],
+    srcB: [...f.tipAt],
+    w: f.width,
+    srcW: f.width * 0.9,
+    taper: 0.2,
+    aHome: [...f.mcp],
+    bHome: [...f.tipAt],
+    erase: { from: f.mcp, to: f.tipAt, w: f.width * 1.3 },
+  }
+}
+
 function step() {
-  const active = [...grabs.values()].map((g) => {
+  const active = []
+  ribbons = []
+
+  for (const g of grabs.values()) {
+    if (g.attach.kind === 'arm' || g.attach.kind === 'finger') {
+      g.ribbon = g.attach.kind === 'arm' ? armRibbon(g) : fingerRibbon(g)
+      if (g.ribbon) ribbons.push(g.ribbon)
+      continue
+    }
     const [ax, ay] = anchor(g)
     const dx = g.x - ax
     const dy = g.y - ay
-    maxStretch = Math.max(maxStretch, Math.hypot(dx * aspect, dy))
-    // arm stretches ramp up from the shoulder so the whole arm stretches, not just the hand
-    const root = g.attach.kind === 'arm' && pose ? pose[g.attach.arm.shoulder] : null
-    const rx = root ? (ax - root.x) * aspect : 0
-    const ry = root ? ay - root.y : 0
-    // the pull reaches further along the pull direction the further you pull. if it stays a small
-    // circle the grabbed skin overtakes the skin in front of it and folds over, so you see it twice
+    // only tug the face a little, the ribbon does the rest
     const len = Math.hypot(dx * aspect, dy)
-    const along = Math.max(g.sigma, len / 1.2)
-    return {
-      ax, ay, dx, dy, root, rx, ry,
-      rlen2: rx * rx + ry * ry || 1,
-      ux: len ? (dx * aspect) / len : 1,
-      uy: len ? dy / len : 0,
-      s2: 2 * g.sigma * g.sigma,
-      s2along: 2 * along * along,
+    const cap = Math.min(1, (g.sigma * TUG) / (len || 1))
+    active.push({ ax, ay, dx: dx * cap, dy: dy * cap, s2: 2 * g.sigma * g.sigma })
+    g.ribbon = {
+      onFace: true,
+      a: [ax, ay],
+      b: [g.x, g.y],
+      srcA: [ax, ay],
+      srcB: [ax, ay],
+      w: g.sigma * 2.6,
+      srcW: g.sigma * 0.8,
+      aHome: [ax, ay],
+      bHome: [ax, ay],
     }
-  })
+    ribbons.push(g.ribbon)
+  }
+
+  const rate = active.length ? FOLLOW : SNAP
+  let biggest = 0
 
   for (let i = 0; i < vertCount * 2; i += 2) {
     let tx = 0
     let ty = 0
     for (const a of active) {
-      let cx = a.ax
-      let cy = a.ay
-      let ramp = 1
-      if (a.root) {
-        // closest point on the shoulder -> hand line, and how far along it we are
-        const px = (rest[i] - a.root.x) * aspect
-        const py = rest[i + 1] - a.root.y
-        ramp = Math.max(0, Math.min(1, (px * a.rx + py * a.ry) / a.rlen2))
-        cx = a.root.x + (a.ax - a.root.x) * ramp
-        cy = a.root.y + (a.ay - a.root.y) * ramp
-      }
-      const ddx = (rest[i] - cx) * aspect
-      const ddy = rest[i + 1] - cy
-      // split the distance into along the pull and across it, so the band stays thin
-      const da = ddx * a.ux + ddy * a.uy
-      const dc = ddx * a.uy - ddy * a.ux
-      const w = ramp * Math.exp(-(da * da) / a.s2along - (dc * dc) / a.s2)
+      const ddx = (rest[i] - a.ax) * aspect
+      const ddy = rest[i + 1] - a.ay
+      const w = Math.exp(-(ddx * ddx + ddy * ddy) / a.s2)
       tx += a.dx * w
       ty += a.dy * w
     }
-    offset[i] += (tx - offset[i]) * FOLLOW
-    offset[i + 1] += (ty - offset[i + 1]) * FOLLOW
+    offset[i] += (tx - offset[i]) * rate
+    offset[i + 1] += (ty - offset[i + 1]) * rate
+    biggest = Math.max(biggest, Math.abs(offset[i]), Math.abs(offset[i + 1]))
   }
+
+  // once it's basically back, reset exactly so no leftover stretch hangs around
+  if (!active.length && biggest < 0.002) offset.fill(0)
+
+  // face ribbons start where the tugged skin is now, so they join up with your face
+  for (const r of ribbons) {
+    if (!r.onFace) continue
+    const [ox, oy] = offsetAt(r.a[0], r.a[1])
+    r.a = [r.a[0] + ox, r.a[1] + oy]
+  }
+
+  // let go ribbons shoot back into you, then disappear
+  for (let k = snaps.length - 1; k >= 0; k--) {
+    const r = snaps[k]
+    for (const [p, home] of [[r.a, r.aHome], [r.b, r.bHome]]) {
+      p[0] += (home[0] - p[0]) * RIBBON_SNAP
+      p[1] += (home[1] - p[1]) * RIBBON_SNAP
+    }
+    if (Math.hypot((r.b[0] - r.bHome[0]) * aspect, r.b[1] - r.bHome[1]) < 0.004) snaps.splice(k, 1)
+  }
+}
+
+// across the ribbon: where each column sits (-1 to 1 edge to edge) and how bright it is.
+// dark edges and a soft shine just off center make it read as a round tube of skin
+const RIBBON_COLS = [
+  [-1, 0.5],
+  [-0.4, 0.95],
+  [0.25, 1.15],
+  [0.6, 0.95],
+  [1, 0.5],
+]
+
+function ribbonVerts(r, out) {
+  const dx = (r.b[0] - r.a[0]) * aspect
+  const dy = r.b[1] - r.a[1]
+  const len = Math.hypot(dx, dy)
+  if (len < 0.01) return
+
+  // bend it into a curve that sags downward like heavy rubber
+  let nx = -dy / len
+  let ny = dx / len
+  if (ny < 0) {
+    nx = -nx
+    ny = -ny
+  }
+  const bow = Math.min(len * 0.12, 0.08)
+  const mx = (r.a[0] + r.b[0]) / 2 + (nx * bow) / aspect
+  const my = (r.a[1] + r.b[1]) / 2 + ny * bow
+  const curve = (t) => {
+    const u = 1 - t
+    return [u * u * r.a[0] + 2 * u * t * mx + t * t * r.b[0], u * u * r.a[1] + 2 * u * t * my + t * t * r.b[1]]
+  }
+
+  // across the source skin. a face grab samples one slice of skin, so it streaks like rubber
+  const sdx = (r.srcB[0] - r.srcA[0]) * aspect
+  const sdy = r.srcB[1] - r.srcA[1]
+  const slen = Math.hypot(sdx, sdy)
+  const spx = slen > 0.001 ? -sdy / slen : -dy / len
+  const spy = slen > 0.001 ? sdx / slen : dx / len
+
+  // the longer it gets the thinner it gets, like real rubber
+  const thin = 1 / (1 + len)
+
+  const rows = []
+  for (let j = 0; j <= RIBBON_SEGS; j++) {
+    const t = j / RIBBON_SEGS
+    const [cx, cy] = curve(t)
+    // the curve's direction here, so the width is always square to it
+    const [ax, ay] = curve(Math.max(0, t - 0.01))
+    const [bx, by] = curve(Math.min(1, t + 0.01))
+    const tx = (bx - ax) * aspect
+    const ty = by - ay
+    const tl = Math.hypot(tx, ty) || 1
+    const px = -ty / tl
+    const py = tx / tl
+    // tapers toward your fingers and pinches in a bit in the middle
+    const half = 0.5 * r.w * thin * (1 - (r.taper ?? 0.55) * t) * (1 - 0.15 * Math.sin(Math.PI * t))
+    const sx = r.srcA[0] + (r.srcB[0] - r.srcA[0]) * t
+    const sy = r.srcA[1] + (r.srcB[1] - r.srcA[1]) * t
+    const sHalf = 0.5 * r.srcW
+    rows.push(
+      RIBBON_COLS.map(([side, shade]) => [
+        cx + (px * half * side) / aspect,
+        cy + py * half * side,
+        sx + (spx * sHalf * side) / aspect,
+        sy + spy * sHalf * side,
+        shade,
+      ]),
+    )
+  }
+  for (let j = 0; j < RIBBON_SEGS; j++) {
+    for (let c = 0; c < RIBBON_COLS.length - 1; c++) {
+      const a = rows[j][c]
+      const b = rows[j][c + 1]
+      const d = rows[j + 1][c]
+      const e = rows[j + 1][c + 1]
+      for (const v of [a, b, d, b, e, d]) out.push(...v)
+    }
+  }
+}
+
+function eraseVerts(e, out) {
+  // a fat line over where the finger / arm really is, in screen coords
+  const dx = (e.to[0] - e.from[0]) * aspect
+  const dy = e.to[1] - e.from[1]
+  const len = Math.hypot(dx, dy)
+  if (len < 0.001) return
+  const half = e.w / 2
+  const px = dy / len / aspect
+  const py = -dx / len
+  // a bit past both ends so the knuckle and fingertip are covered too
+  const ext = half / len
+  const t0 = -ext
+  const t1 = 1 + ext
+  const at = (t, side) => [
+    e.from[0] + (e.to[0] - e.from[0]) * t + px * half * side,
+    e.from[1] + (e.to[1] - e.from[1]) * t + py * half * side,
+  ]
+  const [a, b, c, d] = [at(t0, 1), at(t0, -1), at(t1, 1), at(t1, -1)]
+  out.push(...a, ...b, ...c, ...b, ...d, ...c)
+}
+
+function drawErase() {
+  const hole = []
+  for (const r of [...ribbons, ...snaps]) if (r.erase) eraseVerts(r.erase, hole)
+  if (!hole.length) return
+  if (!pyramid || pyramid.aspect !== aspect) buildPyramid()
+
+  gl.disable(gl.DEPTH_TEST)
+  const top = pyramid.length - 1
+
+  // the camera image at the biggest size, with the hole cut out
+  bindTex(0, tex)
+  fillPass('copy', screenQuad, pyramid[0].push, pyramid[0], (u) => gl.uniform1i(u.src, 0))
+  fillPass('hole', hole, pyramid[0].push, pyramid[0])
+
+  // shrink it down, ignoring the hole
+  for (let i = 1; i <= top; i++) {
+    const from = pyramid[i - 1]
+    bindTex(0, from.push.tex)
+    fillPass('down', screenQuad, pyramid[i].push, pyramid[i], (u) => {
+      gl.uniform1i(u.src, 0)
+      gl.uniform2f(u.srcSize, from.w, from.h)
+    })
+  }
+
+  // grow it back up, filling the hole from the smaller copy each time
+  bindTex(0, pyramid[top].push.tex)
+  fillPass('top', screenQuad, pyramid[top].filled, pyramid[top], (u) => {
+    gl.uniform1i(u.src, 0)
+    gl.uniform2f(u.size, pyramid[top].w, pyramid[top].h)
+  })
+  for (let i = top - 1; i >= 0; i--) {
+    const lvl = pyramid[i]
+    bindTex(0, lvl.push.tex)
+    bindTex(1, pyramid[i + 1].filled.tex)
+    fillPass('up', screenQuad, lvl.filled, lvl, (u) => {
+      gl.uniform1i(u.src, 0)
+      gl.uniform1i(u.coarse, 1)
+      gl.uniform2f(u.size, lvl.w, lvl.h)
+    })
+  }
+
+  // paint the filled image over the hole on screen
+  bindTex(0, pyramid[0].filled.tex)
+  fillPass('paint', hole, null, null, (u) => gl.uniform1i(u.src, 0))
+
+  // put things back how the rest of the drawing expects them
+  bindTex(1, null)
+  bindTex(0, tex)
+  gl.enable(gl.DEPTH_TEST)
+}
+
+function drawRibbons() {
+  const out = []
+  for (const r of [...ribbons, ...snaps]) ribbonVerts(r, out)
+  if (!out.length) return
+
+  gl.useProgram(ribbonProg)
+  gl.bindBuffer(gl.ARRAY_BUFFER, ribbonBuf)
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STREAM_DRAW)
+  const [pos, src, shade] = ribbonLocs
+  for (const loc of ribbonLocs) gl.enableVertexAttribArray(loc)
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 20, 0)
+  gl.vertexAttribPointer(src, 2, gl.FLOAT, false, 20, 8)
+  gl.vertexAttribPointer(shade, 1, gl.FLOAT, false, 20, 16)
+  gl.disable(gl.DEPTH_TEST)
+  gl.drawArrays(gl.TRIANGLES, 0, out.length / 5)
+  gl.enable(gl.DEPTH_TEST)
+  for (const loc of ribbonLocs) gl.disableVertexAttribArray(loc)
+}
+
+function drawMesh() {
+  gl.useProgram(prog)
+  gl.enableVertexAttribArray(restLoc)
+  gl.bindBuffer(gl.ARRAY_BUFFER, restBuf)
+  gl.vertexAttribPointer(restLoc, 2, gl.FLOAT, false, 0, 0)
+  gl.enableVertexAttribArray(offsetLoc)
+  gl.bindBuffer(gl.ARRAY_BUFFER, offsetBuf)
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, offset)
+  gl.vertexAttribPointer(offsetLoc, 2, gl.FLOAT, false, 0, 0)
+  gl.clear(gl.DEPTH_BUFFER_BIT)
+  gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
 }
 
 // ---------- drawing ----------
@@ -562,10 +1067,9 @@ function loop() {
 
   gl.bindTexture(gl.TEXTURE_2D, tex)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video)
-  gl.bindBuffer(gl.ARRAY_BUFFER, offsetBuf)
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, offset)
-  gl.clear(gl.DEPTH_BUFFER_BIT)
-  gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
+  drawMesh()
+  drawErase()
+  drawRibbons()
 
   drawHud()
   requestAnimationFrame(loop)
