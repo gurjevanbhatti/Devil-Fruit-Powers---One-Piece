@@ -1166,6 +1166,22 @@ async function loadModels() {
   ])
 }
 
+function eatFruit() {
+  // two bites, dive into the fruit, fade away (all done in style.css), then the start
+  // screen is gone
+  return new Promise((done) => {
+    const finish = () => {
+      startScreen.remove()
+      done()
+    }
+    startScreen.addEventListener('animationend', (e) => {
+      if (e.target === startScreen) finish()
+    })
+    setTimeout(finish, 3000) // just in case the animation never ends
+    startScreen.classList.add('eating')
+  })
+}
+
 document.getElementById('go').addEventListener('click', async () => {
   statusText.textContent = 'starting camera...'
   try {
@@ -1188,7 +1204,9 @@ document.getElementById('go').addEventListener('click', async () => {
     faceLandmarker = handLandmarker = poseLandmarker = segmenter = null
   }
 
-  startScreen.remove()
+  // start drawing the camera underneath, then eat the fruit to reveal it
+  statusText.textContent = ''
   resize()
   requestAnimationFrame(loop)
+  await eatFruit()
 })

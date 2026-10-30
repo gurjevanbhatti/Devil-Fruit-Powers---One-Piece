@@ -187,3 +187,101 @@ html, body {
 #start .secondary:active { transform: translateY(3px); box-shadow: 0 1px 0 #3a2214; }
 
 #start small { opacity: 0.75; min-height: 1em; }
+
+/* ---------- the start screen: the sign, then the fruit in its chest ---------- */
+
+#start .showcase {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(100%, 520px);
+}
+
+#start .chest {
+  display: block;
+  width: min(100%, 340px);
+  height: auto;
+  overflow: visible;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.35));
+}
+
+/* the cream pill behind the hint, so it's readable over the town */
+#start .tagline {
+  padding: 6px 14px;
+  background: #f6e7c8;
+  color: #3a2214;
+  border: 3px solid #3a2214;
+  border-radius: 999px;
+}
+
+#start .showcase small {
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.chest .fruit,
+.chest .spark {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.chest .bite { opacity: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* the fruit floats on its cushion and the sparkles twinkle */
+  .chest .fruit { animation: float 2.4s steps(4) infinite; }
+  .chest .spark { animation: twinkle 1.8s steps(2) infinite; }
+  .chest .spark:nth-child(2) { animation-delay: 0.6s; }
+  .chest .spark:nth-child(3) { animation-delay: 1.2s; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.2; transform: scale(0.5); }
+}
+
+/* ---------- eating the fruit ----------
+   when the camera's ready: two bites, then dive into the fruit until the screen is all
+   purple, then fade away to show the camera */
+
+#start.eating .sign,
+#start.eating .tagline,
+#start.eating button,
+#start.eating .secondary,
+#start.eating small,
+#start.eating .sparkles {
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+#start.eating .chest .bite1 { animation: chomp 0.01s 0.15s forwards; }
+#start.eating .chest .bite2 { animation: chomp 0.01s 0.45s forwards; }
+#start.eating .chest .fruit { animation: dive 0.9s 0.75s cubic-bezier(0.6, 0, 0.9, 0.4) forwards; }
+#start.eating .chest .box { opacity: 0; transition: opacity 0.4s 0.8s; }
+#start.eating { animation: gone 0.45s 1.45s forwards; }
+
+@keyframes chomp {
+  to { opacity: 1; }
+}
+
+@keyframes dive {
+  0% { transform: scale(1); }
+  15% { transform: scale(0.9); }
+  100% { transform: scale(60); }
+}
+
+@keyframes gone {
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #start.eating .chest .fruit { animation: none; }
+  #start.eating { animation: gone 0.3s forwards; }
+}
