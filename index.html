@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gomu Gomu</title>
+  <title>Gum Gum Cam</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bangers&display=swap" />
@@ -18,7 +18,52 @@
   <div id="start">
     <canvas id="fruits"></canvas>
     <div class="card">
-      <h1>GUM GUM FRUIT</h1>
+      <h1 class="sign">
+        <!-- title sign in the style of the One Piece logo: blue letters, rails, rope, straw hat -->
+        <svg viewBox="0 0 600 200" role="img" aria-label="Gum Gum Cam">
+          <defs>
+            <linearGradient id="sign-blue" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#9fdcff" />
+              <stop offset="0.55" stop-color="#3a8fd6" />
+              <stop offset="1" stop-color="#1b5fa8" />
+            </linearGradient>
+          </defs>
+
+          <!-- rails above and below, the top one curling up into an arrow -->
+          <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M28 40 H530 q30 0 30 -26" stroke="#0b2a55" stroke-width="12" />
+            <path d="M28 40 H530 q30 0 30 -26" stroke="#5fb4ee" stroke-width="5" />
+            <path d="M28 152 H572" stroke="#0b2a55" stroke-width="12" />
+            <path d="M28 152 H572" stroke="#5fb4ee" stroke-width="5" />
+          </g>
+          <path d="M545 18 L560 2 L574 20 Z" fill="#5fb4ee" stroke="#0b2a55" stroke-width="4" stroke-linejoin="round" />
+
+          <!-- the letters: dark outline, white gap, blue fill -->
+          <g font-family="Bangers, system-ui, sans-serif" font-size="118" text-anchor="middle"
+             stroke-linejoin="round" paint-order="stroke">
+            <text x="300" y="142" textLength="500" lengthAdjust="spacingAndGlyphs" fill="#0b2a55"
+                  stroke="#0b2a55" stroke-width="18">GUM GUM CAM</text>
+            <text x="300" y="142" textLength="500" lengthAdjust="spacingAndGlyphs" fill="#fff"
+                  stroke="#fff" stroke-width="8">GUM GUM CAM</text>
+            <text x="300" y="142" textLength="500" lengthAdjust="spacingAndGlyphs"
+                  fill="url(#sign-blue)">GUM GUM CAM</text>
+          </g>
+
+          <!-- straw hat tipped on the first letter -->
+          <g transform="translate(78 54) rotate(-14)" stroke="#0b2a55" stroke-width="4" stroke-linejoin="round">
+            <ellipse cx="0" cy="8" rx="46" ry="11" fill="#f4c430" />
+            <path d="M-24 8 Q-24 -24 0 -24 Q24 -24 24 8 Z" fill="#f4c430" />
+            <path d="M-24 1 H24 V8 H-24 Z" fill="#e63946" stroke-width="3" />
+          </g>
+
+          <!-- rope draped along the bottom, hanging off the end -->
+          <g fill="none" stroke-linecap="round">
+            <path id="sign-rope" d="M36 156 Q120 192 205 160 Q300 194 395 160 Q485 192 566 156 Q584 172 576 194" stroke="#3a2214" stroke-width="11" />
+            <path d="M36 156 Q120 192 205 160 Q300 194 395 160 Q485 192 566 156 Q584 172 576 194" stroke="#b07a3e" stroke-width="6" />
+            <path d="M36 156 Q120 192 205 160 Q300 194 395 160 Q485 192 566 156 Q584 172 576 194" stroke="#6b4226" stroke-width="6" stroke-dasharray="3 6" />
+          </g>
+        </svg>
+      </h1>
       <p>pinch your cheek (or click + drag it) and pull</p>
       <button id="go">turn on camera</button>
       <a class="secondary" href="instructions.html">how to play</a>

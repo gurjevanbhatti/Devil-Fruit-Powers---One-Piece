@@ -1,4 +1,4 @@
-# Gomu Gomu
+# Gum Gum Cam
 
 Stretch your face and body like Luffy, live on your webcam.
 

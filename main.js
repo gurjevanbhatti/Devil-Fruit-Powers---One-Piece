@@ -37,7 +37,15 @@ const ROWS = 60
 // how much of the way to where it should be the skin moves each frame. no springs, so
 // it slides smoothly back to normal when you let go instead of bouncing around
 const FOLLOW = 0.25 // while you're pulling
-const SETTLE = 0.2 // after you let go
+const SETTLE = 0.2 // after you let go of an arm
+
+// letting go of a face or finger stretch snaps back like rubber instead: it shoots
+// past normal, swings back once and settles, all in about a third of a second (the
+// same spring as gazellecheetah's gum-gum-hand-stretch)
+const SNAP_TIME = 0.3 // seconds
+const SNAP_OVERSHOOT = 1.9 // more = less damping, a punchier bounce
+const SNAP_WOBBLE = 2.4 // how many swings fit in the snap
+const SNAP_MAX = 0.05 // furthest it can fly past normal (screen heights), so it never folds into your face
 
 const video = document.getElementById('cam')
 const glCanvas = document.getElementById('gl')
@@ -819,30 +827,67 @@ function step() {
     }
   }
 
-  let armBiggest = 0
-  let fingerBiggest = 0
-  for (let i = 0; i < vertCount * 2; i += 2) {
-    const [tx, ty] = targets(pulls, i)
-    const rate = pulls.length ? FOLLOW : SETTLE
-    offset[i] += (tx - offset[i]) * rate
-    offset[i + 1] += (ty - offset[i + 1]) * rate
+  const now = performance.now()
+  moveLayer(layers.pull, pulls, now)
+  armAmount = moveLayer(layers.arm, arms, now)
+  fingerAmount = moveLayer(layers.finger, fingers, now)
+  armMoving = arms.length > 0 || armAmount > 0.001
+  fingerMoving = fingers.length > 0 || fingerAmount > 0.001 || layers.finger.snap !== null
+}
 
-    const [ax, ay] = targets(arms, i)
-    const armRate = arms.length ? FOLLOW : SETTLE
-    armOffset[i] += (ax - armOffset[i]) * armRate
-    armOffset[i + 1] += (ay - armOffset[i + 1]) * armRate
-    armBiggest = Math.max(armBiggest, Math.abs(armOffset[i]), Math.abs(armOffset[i + 1]))
+// each stretch layer, and whether letting go of it bounces or slides back
+const layers = {
+  pull: { data: offset, bounce: true, held: false, snap: null, start: 0, scale: 1 },
+  arm: { data: armOffset, bounce: false, held: false, snap: null, start: 0, scale: 1 },
+  finger: { data: fingerOffset, bounce: true, held: false, snap: null, start: 0, scale: 1 },
+}
 
-    const [fx, fy] = targets(fingers, i)
-    const fingerRate = fingers.length ? FOLLOW : SETTLE
-    fingerOffset[i] += (fx - fingerOffset[i]) * fingerRate
-    fingerOffset[i + 1] += (fy - fingerOffset[i + 1]) * fingerRate
-    fingerBiggest = Math.max(fingerBiggest, Math.abs(fingerOffset[i]), Math.abs(fingerOffset[i + 1]))
+function spring(t) {
+  // under-damped spring from 0 to 1: overshoots past 1, swings back, settles
+  if (t <= 0) return 0
+  if (t >= 1) return 1
+  return 1 - Math.exp((-3 / SNAP_OVERSHOOT) * t) * Math.cos(SNAP_WOBBLE * Math.PI * t)
+}
+
+function moveLayer(L, list, now) {
+  const d = L.data
+  if (list.length) {
+    L.snap = null
+  } else if (L.held && L.bounce) {
+    // just let go: remember where everything was and start the snap back from there
+    L.snap = d.slice()
+    L.start = now
+    let biggest = 0
+    for (let i = 0; i < d.length; i += 2) biggest = Math.max(biggest, Math.hypot(d[i], d[i + 1]))
+    L.scale = Math.min(1, SNAP_MAX / (biggest || 1))
   }
-  armMoving = arms.length > 0 || armBiggest > 0.001
-  armAmount = armBiggest
-  fingerMoving = fingers.length > 0 || fingerBiggest > 0.001
-  fingerAmount = fingerBiggest
+  L.held = list.length > 0
+
+  let biggest = 0
+  if (L.snap) {
+    const t = (now - L.start) / 1000 / SNAP_TIME
+    // how much of the stretch is left. below 0 means it's flown past normal
+    let left = 1 - spring(t)
+    if (left < 0) left *= L.scale
+    // ease out the last bit so it doesn't pop when the snap ends
+    const end = Math.min(1, Math.max(0, (t - 0.8) / 0.2))
+    left *= 1 - end * end * (3 - 2 * end)
+    for (let i = 0; i < d.length; i++) {
+      d[i] = L.snap[i] * left
+      biggest = Math.max(biggest, Math.abs(d[i]))
+    }
+    if (t >= 1) L.snap = null
+    return biggest
+  }
+
+  const rate = list.length ? FOLLOW : SETTLE
+  for (let i = 0; i < d.length; i += 2) {
+    const [tx, ty] = targets(list, i)
+    d[i] += (tx - d[i]) * rate
+    d[i + 1] += (ty - d[i + 1]) * rate
+    biggest = Math.max(biggest, Math.abs(d[i]), Math.abs(d[i + 1]))
+  }
+  return biggest
 }
 
 // ---------- filling in the real arm ----------
