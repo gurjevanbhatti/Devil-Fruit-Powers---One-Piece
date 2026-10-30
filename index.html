@@ -22,11 +22,14 @@
         <!-- title sign in the style of the One Piece logo: blue letters, rails, rope, straw hat -->
         <svg viewBox="0 0 600 200" role="img" aria-label="Gum Gum Cam">
           <defs>
-            <linearGradient id="sign-blue" x1="0" y1="0" x2="0" y2="1">
+            <!-- one gradient over the whole sign, not one per letter -->
+            <linearGradient id="sign-blue" gradientUnits="userSpaceOnUse" x1="0" y1="56" x2="0" y2="142">
               <stop offset="0" stop-color="#9fdcff" />
               <stop offset="0.55" stop-color="#3a8fd6" />
               <stop offset="1" stop-color="#1b5fa8" />
             </linearGradient>
+            <text id="sign-words" x="300" y="142" text-anchor="middle" textLength="500"
+                  lengthAdjust="spacingAndGlyphs">GUM GUM CAM</text>
           </defs>
 
           <!-- rails above and below, the top one curling up into an arrow -->
@@ -38,15 +41,12 @@
           </g>
           <path d="M545 18 L560 2 L574 20 Z" fill="#5fb4ee" stroke="#0b2a55" stroke-width="4" stroke-linejoin="round" />
 
-          <!-- the letters: dark outline, white gap, blue fill -->
-          <g font-family="Bangers, system-ui, sans-serif" font-size="118" text-anchor="middle"
-             stroke-linejoin="round" paint-order="stroke">
-            <text x="300" y="142" textLength="500" lengthAdjust="spacingAndGlyphs" fill="#0b2a55"
-                  stroke="#0b2a55" stroke-width="18">GUM GUM CAM</text>
-            <text x="300" y="142" textLength="500" lengthAdjust="spacingAndGlyphs" fill="#fff"
-                  stroke="#fff" stroke-width="8">GUM GUM CAM</text>
-            <text x="300" y="142" textLength="500" lengthAdjust="spacingAndGlyphs"
-                  fill="url(#sign-blue)">GUM GUM CAM</text>
+          <!-- the letters: dark outline, white gap, blue fill. the words are written once and
+               reused for each layer, so the three layers always line up exactly -->
+          <g font-family="Bangers, system-ui, sans-serif" font-size="118" stroke-linejoin="round">
+            <use href="#sign-words" fill="#0b2a55" stroke="#0b2a55" stroke-width="18" />
+            <use href="#sign-words" fill="#fff" stroke="#fff" stroke-width="8" />
+            <use href="#sign-words" fill="url(#sign-blue)" stroke="none" />
           </g>
 
           <!-- straw hat tipped on the first letter -->
