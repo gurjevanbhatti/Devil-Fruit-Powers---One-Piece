@@ -65,9 +65,11 @@ const vertSrc = `
 attribute vec2 rest;
 attribute vec2 offset;
 varying vec2 uv;
+varying vec2 src;
 void main() {
   vec2 p = rest + offset;
   uv = vec2(1.0 - rest.x, rest.y);
+  src = rest;
   // the further skin is pulled the closer it gets drawn, so the stretched bit goes over your face
   float z = -clamp(length(offset), 0.0, 0.99);
   gl_Position = vec4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, z, 1.0);
@@ -77,11 +79,22 @@ const fragSrc = `
 precision mediump float;
 uniform sampler2D tex;
 uniform sampler2D mask;
-uniform float useMask;
+uniform float useMask; // 0 = everything, 1 = just you, 2 = just one finger
+uniform vec4 finger; // the stretched finger's knuckle (xy) and tip (zw), on screen
+uniform float fingerR;
+uniform float aspect;
 varying vec2 uv;
+varying vec2 src;
 void main() {
   // the arm layer only draws you, never the background, so your curtains stay put
   if (useMask > 0.5 && texture2D(mask, uv).r < 0.5) discard;
+  if (useMask > 1.5) {
+    // the finger layer only draws pixels that came from the finger, not its neighbours
+    vec2 pa = (src - finger.xy) * vec2(aspect, 1.0);
+    vec2 ba = (finger.zw - finger.xy) * vec2(aspect, 1.0);
+    float t = clamp(dot(pa, ba) / max(dot(ba, ba), 0.000001), 0.0, 1.0);
+    if (length(pa - ba * t) > fingerR) discard;
+  }
   gl_FragColor = texture2D(tex, uv);
 }`
 
@@ -104,6 +117,8 @@ const rest = new Float32Array(vertCount * 2)
 const offset = new Float32Array(vertCount * 2)
 // arm stretches get their own layer, drawn on top with the background cut out
 const armOffset = new Float32Array(vertCount * 2)
+// and so do finger stretches, cut down to just that finger
+const fingerOffset = new Float32Array(vertCount * 2)
 
 for (let r = 0; r <= ROWS; r++) {
   for (let c = 0; c <= COLS; c++) {
@@ -140,6 +155,7 @@ const restBuf = attrib('rest', rest, gl.STATIC_DRAW)
 const restLoc = gl.getAttribLocation(prog, 'rest')
 const offsetBuf = attrib('offset', offset, gl.DYNAMIC_DRAW)
 const armOffsetBuf = attrib('offset', armOffset, gl.DYNAMIC_DRAW)
+const fingerOffsetBuf = attrib('offset', fingerOffset, gl.DYNAMIC_DRAW)
 const offsetLoc = gl.getAttribLocation(prog, 'offset')
 
 const indexBuf = gl.createBuffer()
@@ -171,6 +187,9 @@ gl.activeTexture(gl.TEXTURE0)
 gl.uniform1i(gl.getUniformLocation(prog, 'tex'), 0)
 gl.uniform1i(gl.getUniformLocation(prog, 'mask'), 1)
 const useMaskLoc = gl.getUniformLocation(prog, 'useMask')
+const fingerLoc = gl.getUniformLocation(prog, 'finger')
+const fingerRLoc = gl.getUniformLocation(prog, 'fingerR')
+const aspectLoc = gl.getUniformLocation(prog, 'aspect')
 
 let personMask = null
 
@@ -193,10 +212,16 @@ function updatePersonMask() {
 
 // paints over where your real arm and hand are while the arm is stretched, so you only
 // see the stretched one.
-// the hole is filled like OpenCV's inpaint: the camera image is shrunk step by step
+// first choice is the background memory: like background removal apps, every so often
+// the pixels the segmenter says are background get saved, so it knows what your wall
+// looks like even when your arm is in front of it, and your real arm just disappears.
+// any bit of wall it has never seen (say you've had your arm there the whole time)
+// is filled like OpenCV's inpaint instead: the camera image is shrunk step by step
 // ignoring the hole, then grown back up filling the hole from the smaller copies, so
 // the colours all around it blend in from every side ("push-pull" fill)
 const FILL_WIDTH = 320 // the fill is smooth anyway, so it's worked out on a small copy
+const PLATE_WIDTH = 640 // the background memory needs to look sharp, so it's bigger
+const LEARN_EVERY = 3 // frames between background memory updates while nothing's stretched
 
 // everything here draws shapes given in screen coords (0..1, y down)
 const fillVert = `
@@ -251,13 +276,34 @@ void main() {
   vec3 c = texture2D(coarse, gl_FragCoord.xy / size).rgb;
   gl_FragColor = vec4(f.rgb + (1.0 - f.a) * c, 1.0);
 }`,
-  // finally, paint the filled image over the hole on screen
+  // finally, paint over the hole on screen: the remembered background where there is
+  // one, the fill where there isn't
   paint: `
 precision mediump float;
 uniform sampler2D src;
+uniform sampler2D plate;
 varying vec2 sc;
 void main() {
-  gl_FragColor = vec4(texture2D(src, vec2(sc.x, 1.0 - sc.y)).rgb, 1.0);
+  vec2 p = vec2(sc.x, 1.0 - sc.y);
+  vec4 bg = texture2D(plate, p);
+  vec3 filled = texture2D(src, p).rgb;
+  gl_FragColor = vec4(mix(filled, bg.rgb, smoothstep(0.5, 0.9, bg.a)), 1.0);
+}`,
+  // saves the camera image into the background memory wherever it's clearly background.
+  // the edge around you is fuzzy, so anywhere a little bit near you is skipped too
+  learn: `
+precision mediump float;
+uniform sampler2D src;
+uniform sampler2D mask;
+varying vec2 sc;
+void main() {
+  vec2 v = vec2(1.0 - sc.x, sc.y);
+  float you = texture2D(mask, v).r;
+  you = max(you, texture2D(mask, v + vec2(0.025, 0.0)).r);
+  you = max(you, texture2D(mask, v - vec2(0.025, 0.0)).r);
+  you = max(you, texture2D(mask, v + vec2(0.0, 0.035)).r);
+  you = max(you, texture2D(mask, v - vec2(0.0, 0.035)).r);
+  gl_FragColor = vec4(texture2D(src, v).rgb, 1.0 - step(0.5, you));
 }`,
 }
 
@@ -268,13 +314,14 @@ for (const [name, frag] of Object.entries(fillShaders)) {
   gl.attachShader(pr, compile(gl.FRAGMENT_SHADER, frag))
   gl.linkProgram(pr)
   const uniforms = {}
-  for (const u of ['src', 'coarse', 'srcSize', 'size']) uniforms[u] = gl.getUniformLocation(pr, u)
+  for (const u of ['src', 'coarse', 'srcSize', 'size', 'plate', 'mask']) uniforms[u] = gl.getUniformLocation(pr, u)
   fill[name] = { prog: pr, pos: gl.getAttribLocation(pr, 'pos'), u: uniforms }
 }
 const fillBuf = gl.createBuffer()
 const screenQuad = [0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1]
 
 let pyramid = null // [{ w, h, push: {tex, fb}, filled: {tex, fb} }] biggest first
+let plate = null // the background memory, alpha 1 where it has seen the background
 
 function makeTarget(w, h) {
   const t = gl.createTexture()
@@ -301,7 +348,33 @@ function buildPyramid() {
     h = Math.max(1, Math.ceil(h / 2))
   }
   pyramid.aspect = aspect
+  // a new camera shape means the old background memory doesn't line up any more
+  plate = makeTarget(PLATE_WIDTH, Math.max(1, Math.round(PLATE_WIDTH / aspect)))
+  plate.w = PLATE_WIDTH
+  plate.h = Math.max(1, Math.round(PLATE_WIDTH / aspect))
+  gl.clearColor(0, 0, 0, 0)
+  gl.clear(gl.COLOR_BUFFER_BIT)
   gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+}
+
+function learnBackground() {
+  if (!pyramid || pyramid.aspect !== aspect) buildPyramid()
+  gl.disable(gl.DEPTH_TEST)
+  gl.enable(gl.BLEND)
+  // colour: swap in the new pixel where it's background. alpha: remember it's been seen
+  gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE)
+  bindTex(0, tex)
+  bindTex(1, maskTex)
+  fillPass('learn', screenQuad, plate, plate, (u) => {
+    gl.uniform1i(u.src, 0)
+    gl.uniform1i(u.mask, 1)
+  })
+  gl.disable(gl.BLEND)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+  gl.viewport(0, 0, glCanvas.width, glCanvas.height)
+  bindTex(1, null)
+  bindTex(0, tex)
+  gl.enable(gl.DEPTH_TEST)
 }
 
 function fillPass(name, verts, target, level, setup) {
@@ -426,7 +499,15 @@ function grabbingArm(wrist) {
   return dl < dr ? LEFT_ARM : RIGHT_ARM
 }
 
-function startGrab(id, x, y, wrist) {
+function startGrab(id, x, y, wrist, skipHand) {
+  // a fingertip of your other hand wins over everything else
+  const finger = findFinger(x, y, skipHand)
+  if (finger) {
+    const [tx, ty] = finger.tip
+    grabs.set(id, { attach: { kind: 'finger', ...finger, ox: x - tx, oy: y - ty }, x, y, sigma: finger.fw * 0.65 })
+    return
+  }
+
   const onFace = insideFace(x, y)
   const anyModel = faceLandmarker || segmenter
 
@@ -474,6 +555,10 @@ function anchor(g) {
     return [bx + a.ox, by + a.oy]
   }
   if (a.kind === 'arm' && pose) return handPoint(a.arm)
+  if (a.kind === 'finger') {
+    trackFinger(a)
+    return [a.tip[0] + a.ox, a.tip[1] + a.oy]
+  }
   if (a.kind === 'fixed') return [a.ox, a.oy]
   return [g.x, g.y] // lost tracking, just go slack
 }
@@ -496,6 +581,7 @@ glCanvas.addEventListener('pointercancel', (e) => endGrab('p' + e.pointerId))
 const pinching = [false, false]
 let pinchPoints = []
 let handPoints = [] // every hand's 21 points in screen space, for the H guides
+let handLabels = [] // 'Left' / 'Right' for each of those, to keep track of which is which
 
 // press H to show what the camera thinks your hands are doing
 let showHands = false
@@ -506,6 +592,7 @@ addEventListener('keydown', (e) => {
 function updateHands(result) {
   pinchPoints = []
   handPoints = result.landmarks.map((hand) => hand.map((p) => ({ x: 1 - p.x, y: p.y })))
+  handLabels = result.landmarks.map((_, i) => result.handedness?.[i]?.[0]?.categoryName ?? String(i))
   const seen = [false, false]
 
   result.landmarks.forEach((hand, h) => {
@@ -523,7 +610,7 @@ function updateHands(result) {
     pinchPoints.push({ x, y, isPinch })
     const wrist = { x: 1 - hand[0].x, y: hand[0].y }
 
-    if (isPinch && !pinching[h]) startGrab('h' + h, x, y, wrist)
+    if (isPinch && !pinching[h]) startGrab('h' + h, x, y, wrist, h)
     else if (isPinch) moveGrab('h' + h, x, y)
     else if (pinching[h]) endGrab('h' + h)
     pinching[h] = isPinch
@@ -536,6 +623,62 @@ function updateHands(result) {
       pinching[h] = false
     }
   }
+}
+
+// ---------- finger stretch ----------
+
+// pinch a fingertip of your other hand and pull, and just that finger stretches.
+// idea from gazellecheetah's gum-gum-hand-stretch (github.com/gazellecheetah/gum-gum-hand-stretch)
+const FINGERS = [
+  { tip: 8, base: 5 }, // index
+  { tip: 12, base: 9 }, // middle
+  { tip: 16, base: 13 }, // ring
+  { tip: 20, base: 17 }, // pinky
+]
+const FINGER_GRAB = 1.6 // how close (in finger widths) a pinch has to be to a fingertip
+const FINGER_ROOTED = 1.6 // above 1 keeps the knuckle end of the finger more still
+
+function fingerWidth(hand) {
+  // about the gap between your knuckles
+  let sum = 0
+  for (const [a, b] of [[5, 9], [9, 13], [13, 17]]) {
+    sum += Math.hypot((hand[a].x - hand[b].x) * aspect, hand[a].y - hand[b].y)
+  }
+  return sum / 3
+}
+
+function findFinger(x, y, skipHand) {
+  let best = null
+  let bestD = Infinity
+  handPoints.forEach((hand, h) => {
+    if (h === skipHand) return
+    const fw = fingerWidth(hand)
+    for (const f of FINGERS) {
+      const d = Math.hypot((hand[f.tip].x - x) * aspect, hand[f.tip].y - y)
+      if (d < fw * FINGER_GRAB && d < bestD) {
+        bestD = d
+        best = {
+          label: handLabels[h],
+          finger: f,
+          tip: [hand[f.tip].x, hand[f.tip].y],
+          base: [hand[f.base].x, hand[f.base].y],
+          fw,
+        }
+      }
+    }
+  })
+  return best
+}
+
+function trackFinger(a) {
+  // follow the finger as the hand moves. while the other hand covers it the tracking
+  // can drop out, so it just stays where it was last seen
+  const h = handLabels.indexOf(a.label)
+  if (h < 0 || handLabels.indexOf(a.label, h + 1) >= 0) return
+  const hand = handPoints[h]
+  a.tip = [hand[a.finger.tip].x, hand[a.finger.tip].y]
+  a.base = [hand[a.finger.base].x, hand[a.finger.base].y]
+  a.fw = fingerWidth(hand)
 }
 
 // ---------- arm stretch ----------
@@ -626,6 +769,7 @@ function targets(list, i) {
       ramp = Math.max(0, Math.min(1, (px * a.rx + py * a.ry) / a.rlen2))
       cx = a.root.x + (a.ax - a.root.x) * ramp
       cy = a.root.y + (a.ay - a.root.y) * ramp
+      if (a.gamma) ramp **= a.gamma
     }
     const ddx = (rest[i] - cx) * aspect
     const ddy = rest[i + 1] - cy
@@ -639,24 +783,44 @@ function targets(list, i) {
 let armMoving = false
 let armAmount = 0 // how far the arm layer is stretched, in screen heights
 let lastArm = null // the arm being stretched (kept while it slides back)
+let fingerMoving = false
+let fingerAmount = 0
+let lastFinger = null // the finger being stretched (kept while it slides back)
+
+function rootOf(g) {
+  // arm and finger stretches ramp up from the shoulder / knuckle so the whole arm or
+  // finger stretches, not just the end of it
+  if (g.attach.kind === 'arm' && pose) return pose[g.attach.arm.shoulder]
+  if (g.attach.kind === 'finger') return { x: g.attach.base[0], y: g.attach.base[1] }
+  return null
+}
 
 function step() {
   const pulls = []
   const arms = []
+  const fingers = []
   for (const g of grabs.values()) {
     const [ax, ay] = anchor(g)
     const dx = g.x - ax
     const dy = g.y - ay
-    // arm stretches ramp up from the shoulder so the whole arm stretches, not just the hand
-    const root = g.attach.kind === 'arm' && pose ? pose[g.attach.arm.shoulder] : null
+    const root = rootOf(g)
     const rx = root ? (ax - root.x) * aspect : 0
     const ry = root ? ay - root.y : 0
     const a = { ax, ay, dx, dy, s2: 2 * g.sigma * g.sigma, root, rx, ry, rlen2: rx * rx + ry * ry || 1 }
-    ;(g.attach.kind === 'arm' ? arms : pulls).push(a)
-    if (g.attach.kind === 'arm') lastArm = g.attach.arm
+    if (g.attach.kind === 'arm') {
+      arms.push(a)
+      lastArm = g.attach.arm
+    } else if (g.attach.kind === 'finger') {
+      a.gamma = FINGER_ROOTED
+      fingers.push(a)
+      lastFinger = g.attach
+    } else {
+      pulls.push(a)
+    }
   }
 
-  let biggest = 0
+  let armBiggest = 0
+  let fingerBiggest = 0
   for (let i = 0; i < vertCount * 2; i += 2) {
     const [tx, ty] = targets(pulls, i)
     const rate = pulls.length ? FOLLOW : SETTLE
@@ -667,10 +831,18 @@ function step() {
     const armRate = arms.length ? FOLLOW : SETTLE
     armOffset[i] += (ax - armOffset[i]) * armRate
     armOffset[i + 1] += (ay - armOffset[i + 1]) * armRate
-    biggest = Math.max(biggest, Math.abs(armOffset[i]), Math.abs(armOffset[i + 1]))
+    armBiggest = Math.max(armBiggest, Math.abs(armOffset[i]), Math.abs(armOffset[i + 1]))
+
+    const [fx, fy] = targets(fingers, i)
+    const fingerRate = fingers.length ? FOLLOW : SETTLE
+    fingerOffset[i] += (fx - fingerOffset[i]) * fingerRate
+    fingerOffset[i + 1] += (fy - fingerOffset[i + 1]) * fingerRate
+    fingerBiggest = Math.max(fingerBiggest, Math.abs(fingerOffset[i]), Math.abs(fingerOffset[i + 1]))
   }
-  armMoving = arms.length > 0 || biggest > 0.001
-  armAmount = biggest
+  armMoving = arms.length > 0 || armBiggest > 0.001
+  armAmount = armBiggest
+  fingerMoving = fingers.length > 0 || fingerBiggest > 0.001
+  fingerAmount = fingerBiggest
 }
 
 // ---------- filling in the real arm ----------
@@ -691,6 +863,15 @@ function armHoles() {
     { from: [E.x, E.y], to: [W.x, W.y], w: fore * 0.55 * fade },
     { from: [W.x, W.y], to: [tip.x, tip.y], w: fore * 0.9 * fade },
   ]
+}
+
+function fingerHoles() {
+  // your real finger, so only the stretched one shows
+  if (!fingerMoving || !lastFinger) return []
+  const fade = Math.min(1, fingerAmount / 0.015)
+  if (fade <= 0) return []
+  const { base, tip, fw } = lastFinger
+  return [{ from: base, to: tip, w: fw * 1.1 * fade }]
 }
 
 function eraseVerts(e, out) {
@@ -714,9 +895,9 @@ function eraseVerts(e, out) {
   out.push(...a, ...b, ...c, ...b, ...d, ...c)
 }
 
-function drawErase() {
+function drawErase(holes) {
   const hole = []
-  for (const e of armHoles()) eraseVerts(e, hole)
+  for (const e of holes) eraseVerts(e, hole)
   if (!hole.length) return
   if (!pyramid || pyramid.aspect !== aspect) buildPyramid()
 
@@ -755,9 +936,13 @@ function drawErase() {
     })
   }
 
-  // paint the filled image over the hole on screen
+  // paint the remembered background (or the fill) over the hole on screen
   bindTex(0, pyramid[0].filled.tex)
-  fillPass('paint', hole, null, null, (u) => gl.uniform1i(u.src, 0))
+  bindTex(1, plate.tex)
+  fillPass('paint', hole, null, null, (u) => {
+    gl.uniform1i(u.src, 0)
+    gl.uniform1i(u.plate, 1)
+  })
 
   // put things back how the rest of the drawing expects them
   bindTex(1, null)
@@ -820,7 +1005,25 @@ function drawHud() {
   }
 }
 
+function drawLayer(buf, data, maskMode) {
+  // the fill used its own shaders, so set the mesh back up
+  gl.useProgram(prog)
+  gl.enableVertexAttribArray(restLoc)
+  gl.bindBuffer(gl.ARRAY_BUFFER, restBuf)
+  gl.vertexAttribPointer(restLoc, 2, gl.FLOAT, false, 0, 0)
+  bindTex(1, maskTex)
+  gl.activeTexture(gl.TEXTURE0)
+  gl.enableVertexAttribArray(offsetLoc)
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, data)
+  gl.vertexAttribPointer(offsetLoc, 2, gl.FLOAT, false, 0, 0)
+  gl.uniform1f(useMaskLoc, maskMode)
+  gl.clear(gl.DEPTH_BUFFER_BIT)
+  gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
+}
+
 let lastVideoTime = -1
+let frameCount = 0
 let lastLoop = performance.now()
 
 function loop() {
@@ -843,11 +1046,17 @@ function loop() {
 
   updateArms(dt)
   step()
-  // only work out which pixels are you while an arm is stretching, it isn't free
-  if (segmenter && armMoving) updatePersonMask()
 
   gl.bindTexture(gl.TEXTURE_2D, tex)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video)
+
+  // working out which pixels are you isn't free, so every frame only while something's
+  // stretched, and every few frames otherwise to keep the background memory fresh
+  frameCount++
+  if (segmenter && (armMoving || fingerMoving || frameCount % LEARN_EVERY === 0)) {
+    updatePersonMask()
+    learnBackground()
+  }
 
   // the whole picture, with face / body pulls
   gl.useProgram(prog)
@@ -863,23 +1072,20 @@ function loop() {
   gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
 
   // then a stretched arm on top, just you with the background cut out, so the
-  // background underneath never moves
+  // background underneath never moves. your real arm is rubbed out first
   if (armMoving) {
-    drawErase()
-    // the fill used its own shaders, so set the mesh back up
+    drawErase(armHoles())
+    drawLayer(armOffsetBuf, armOffset, 1)
+  }
+  // same for a stretched finger, cut down to just that finger
+  if (fingerMoving && lastFinger) {
+    drawErase(fingerHoles())
+    const { base, tip, fw } = lastFinger
     gl.useProgram(prog)
-    gl.enableVertexAttribArray(restLoc)
-    gl.bindBuffer(gl.ARRAY_BUFFER, restBuf)
-    gl.vertexAttribPointer(restLoc, 2, gl.FLOAT, false, 0, 0)
-    bindTex(1, maskTex)
-    gl.activeTexture(gl.TEXTURE0)
-    gl.enableVertexAttribArray(offsetLoc)
-    gl.bindBuffer(gl.ARRAY_BUFFER, armOffsetBuf)
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, armOffset)
-    gl.vertexAttribPointer(offsetLoc, 2, gl.FLOAT, false, 0, 0)
-    gl.uniform1f(useMaskLoc, 1)
-    gl.clear(gl.DEPTH_BUFFER_BIT)
-    gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
+    gl.uniform4f(fingerLoc, base[0], base[1], tip[0], tip[1])
+    gl.uniform1f(fingerRLoc, fw * 0.6)
+    gl.uniform1f(aspectLoc, aspect)
+    drawLayer(fingerOffsetBuf, fingerOffset, 2)
   }
 
   drawHud()
