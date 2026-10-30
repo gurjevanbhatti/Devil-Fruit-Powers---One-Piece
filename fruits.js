@@ -13,6 +13,12 @@ let width = 0
 let height = 0
 let fruits = []
 
+// the town, sea and ship are drawn small and blown up with sharp pixels, so they look
+// like pixel art to match the fruit and hat
+const PIXEL = 4 // how many screen pixels each background pixel takes up
+const bg = document.createElement('canvas')
+const bgCtx = bg.getContext('2d')
+
 function spawn(fruit, anywhere) {
   // depth 0 is far away (small, slow, faded), 1 is close
   const depth = Math.random()
@@ -37,54 +43,245 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   // keep the pixel art sharp instead of blurry when it's scaled
   ctx.imageSmoothingEnabled = false
+  bg.width = Math.ceil(width / PIXEL)
+  bg.height = Math.ceil(height / PIXEL)
+  buildTown(bg.width, bg.height)
 
-  const count = Math.round(Math.min(40, Math.max(12, (width * height) / 26000)))
+  const count = Math.round(Math.min(18, Math.max(8, (width * height) / 60000)))
   while (fruits.length < count) fruits.push(spawn({}, true))
   fruits.length = count
   // far fruits first so the close ones are drawn on top
   fruits.sort((a, b) => a.depth - b.depth)
 }
 
-// ---------- the sea and the ship ----------
+// ---------- the harbour town ----------
 
-// where the sky meets the sea, matching the background gradient in style.css
-const HORIZON = 0.585
-const SHIP_SPEED = 22 // pixels per second
+// a little town on a cliff above the sea (windmills, red roofs, trees, paths, a dock with
+// the ship tied up), seen from above like a map. the town is laid out at random once,
+// then only the sea, the windmills and the ship move
 
-let shipX = 120
-
-function drawWaves(t) {
-  // a few soft wave lines drifting across the sea
-  ctx.save()
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)'
-  ctx.lineWidth = 2
-  ctx.lineCap = 'round'
-  const top = height * HORIZON
-  for (let row = 0; row < 6; row++) {
-    const y = top + 14 + row * ((height - top) / 6)
-    const gap = 140 + row * 30
-    const drift = (t * (8 + row * 4)) % gap
-    for (let x = -gap + drift + (row % 2) * 60; x < width + gap; x += gap) {
-      ctx.beginPath()
-      ctx.moveTo(x, y)
-      ctx.quadraticCurveTo(x + 12, y - 6, x + 24, y)
-      ctx.quadraticCurveTo(x + 36, y + 6, x + 48, y)
-      ctx.stroke()
-    }
+function random(seed) {
+  // the same seed always gives the same town, so it doesn't change on every resize
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
-  ctx.restore()
 }
 
-function drawShip(t, dt) {
-  // a little pirate ship with a sheep figurehead and a straw hat flag, sailing along
-  // the horizon and bobbing on the waves. s is its size, everything is drawn in units of s
-  const s = Math.min(70, Math.max(40, width * 0.05))
-  if (!reduceMotion) shipX += SHIP_SPEED * dt
-  if (shipX > width + s * 2) shipX = -s * 2
-  const bob = reduceMotion ? 0 : Math.sin(t * 1.6)
+const ROOFS = [
+  ['#d9472b', '#a8321c'],
+  ['#e8743a', '#b8541f'],
+  ['#e9b23c', '#b8861f'],
+]
 
+// the town is drawn once into here, then copied each frame
+const town = document.createElement('canvas')
+const townCtx = town.getContext('2d')
+let mills = [] // windmill hubs, their blades are drawn every frame
+let sparkles = [] // glints on the water
+let dock = null
+
+// where the land ends, going down a little to the left
+function coastY(x, W, H) {
+  return H * (0.52 - 0.1 * (x / W)) + Math.sin(x * 0.09) * 1.5 + Math.sin(x * 0.023 + 1) * 4
+}
+
+function house(g, x, y, u, rand) {
+  const [roof, roofDark] = ROOFS[Math.floor(rand() * ROOFS.length)]
+  const w = (9 + Math.floor(rand() * 4)) * u
+  const h = 5 * u
+  const r = 4 * u
+  g.fillStyle = 'rgba(0, 0, 0, 0.2)'
+  g.fillRect(x + u, y + r + h, w, u) // shadow
+  g.fillStyle = '#f3ead6'
+  g.fillRect(x, y + r, w, h) // walls
+  g.fillStyle = '#d6c9ad'
+  g.fillRect(x + w - 2 * u, y + r, 2 * u, h)
+  g.fillStyle = roof
+  g.fillRect(x - u, y, w + 2 * u, r)
+  g.fillStyle = roofDark
+  g.fillRect(x - u, y + r - u, w + 2 * u, u)
+  g.fillStyle = 'rgba(255, 255, 255, 0.35)'
+  g.fillRect(x - u, y, w + 2 * u, u)
+  g.fillStyle = '#7a4a2a'
+  g.fillRect(x + 2 * u, y + r + h - 3 * u, 2 * u, 3 * u) // door
+  g.fillStyle = '#5b7fa8'
+  g.fillRect(x + 5 * u, y + r + u, 2 * u, 2 * u) // window
+}
+
+function tree(g, x, y, u, rand) {
+  const r = (2.5 + rand() * 1.5) * u
+  g.fillStyle = 'rgba(0, 0, 0, 0.2)'
+  g.beginPath()
+  g.ellipse(x + u, y + r * 0.9, r, r * 0.45, 0, 0, Math.PI * 2)
+  g.fill()
+  g.fillStyle = '#2c6e31'
+  g.beginPath()
+  g.arc(x, y, r, 0, Math.PI * 2)
+  g.fill()
+  g.fillStyle = '#4a9a3c'
+  g.beginPath()
+  g.arc(x - r * 0.3, y - r * 0.3, r * 0.5, 0, Math.PI * 2)
+  g.fill()
+}
+
+function millTower(g, x, y, u) {
+  g.fillStyle = 'rgba(0, 0, 0, 0.2)'
+  g.fillRect(x + u, y + 12 * u, 6 * u, u)
+  g.fillStyle = '#efeee8'
+  g.fillRect(x, y + 3 * u, 6 * u, 9 * u)
+  g.fillStyle = '#cfcfc6'
+  g.fillRect(x + 4 * u, y + 3 * u, 2 * u, 9 * u)
+  g.fillStyle = '#3f8f4a'
+  g.fillRect(x - u, y + u, 8 * u, 3 * u) // green cap
+  g.fillRect(x, y, 6 * u, u)
+  g.fillStyle = '#7a4a2a'
+  g.fillRect(x + 2 * u, y + 9 * u, 2 * u, 3 * u)
+}
+
+function buildTown(W, H) {
+  town.width = W
+  town.height = H
+  const g = townCtx
+  const rand = random(7)
+  const u = Math.max(1, Math.round(Math.min(W, H) / 170))
+
+  // sea, darker further out
+  const sea = ['#2f86e0', '#2879d4', '#226cc6', '#1d60b8', '#1855a8', '#144a98']
+  for (let y = 0; y < H; y++) {
+    g.fillStyle = sea[Math.min(sea.length - 1, Math.floor(((y / H) * sea.length * 1.3) | 0))]
+    g.fillRect(0, y, W, 1)
+  }
+
+  // land: rocky cliff on the left, sandy beach on the right where the dock is
+  for (let x = 0; x < W; x++) {
+    const c = Math.round(coastY(x, W, H))
+    const beach = x > W * 0.55
+    g.fillStyle = '#5aa83c'
+    g.fillRect(x, 0, 1, c)
+    g.fillStyle = beach ? '#e8d39a' : '#8d8f8a'
+    g.fillRect(x, c, 1, (beach ? 3 : 4) * u)
+    g.fillStyle = beach ? '#cdb77c' : '#6b6d69'
+    g.fillRect(x, c + (beach ? 3 : 4) * u, 1, u)
+  }
+  // patchy grass
+  for (let i = 0; i < (W * H) / 60; i++) {
+    const x = Math.floor(rand() * W)
+    const y = Math.floor(rand() * coastY(x, W, H)) - 2
+    g.fillStyle = rand() < 0.5 ? '#6fbf4a' : '#4a9432'
+    g.fillRect(x, y, u, u)
+  }
+
+  // dirt paths winding down to the dock
+  // the ship sits against the right edge with the dock just to its left
+  const shipX = W - shipSize(W) * 1.25
+  const dockX = Math.round(shipX - shipSize(W) * 1.2 - 4 * u)
+  dock = { x: dockX, y: coastY(dockX, W, H), shipX }
+  g.strokeStyle = '#d9c08a'
+  g.lineWidth = 3 * u
+  g.lineCap = 'round'
+  g.beginPath()
+  g.moveTo(0, H * 0.18)
+  g.bezierCurveTo(W * 0.35, H * 0.12, W * 0.45, H * 0.3, dock.x, dock.y)
+  g.stroke()
+
+  // houses, windmills and trees, spaced out, drawn top to bottom so nearer ones overlap
+  const things = []
+  const free = (x, y, gap) => things.every((t) => Math.hypot(t.x - x, t.y - y) > gap + t.gap)
+  // sides only keeps something out from behind the card in the middle
+  const place = (kind, count, gap, edge, sidesOnly) => {
+    for (let n = 0, tries = 0; n < count && tries < count * 40; tries++) {
+      let x = rand() * (W - 12 * u)
+      if (sidesOnly) x = rand() < 0.5 ? rand() * W * 0.22 : W * 0.78 + rand() * (W * 0.22 - 10 * u)
+      const y = rand() * (coastY(x, W, H) - edge * u)
+      if (y < -4 * u || !free(x, y, gap * u)) continue
+      things.push({ kind, x, y, gap: gap * u })
+      n++
+    }
+  }
+  place('mill', 2, 10, 16, true)
+  place('house', Math.round((W * H) / 6000), 14, 12)
+  place('tree', Math.round((W * H) / 1400), 5, 6)
+  things.sort((a, b) => a.y - b.y)
+  mills = []
+  for (const t of things) {
+    const x = Math.round(t.x)
+    const y = Math.round(t.y)
+    if (t.kind === 'house') house(g, x, y, u, rand)
+    else if (t.kind === 'tree') tree(g, x, y, u, rand)
+    else {
+      millTower(g, x, y, u)
+      mills.push({ x: x + 3 * u, y: y + 2 * u, len: 7 * u, spin: rand() * 6, u })
+    }
+  }
+
+  // the dock, with a rowboat tied to it
+  g.fillStyle = '#8b5a2b'
+  g.fillRect(Math.round(dock.x), Math.round(dock.y), 4 * u, 16 * u)
+  g.fillStyle = '#6b4226'
+  for (let i = 0; i < 16; i += 2) g.fillRect(Math.round(dock.x), Math.round(dock.y) + i * u, 4 * u, u / 2 || 1)
+  g.fillStyle = '#a0683a'
+  g.fillRect(Math.round(dock.x) - 7 * u, Math.round(dock.y) + 9 * u, 5 * u, 2 * u)
+
+  // glints on the water, they twinkle every frame
+  sparkles = []
+  for (let i = 0; i < (W * H) / 500; i++) {
+    const x = rand() * W
+    const y = coastY(x, W, H) + 6 * u + rand() * H
+    if (y < H) sparkles.push({ x, y, len: (2 + Math.floor(rand() * 4)) * u, phase: rand() * 6 })
+  }
+}
+
+function drawTown(g, W, H, t) {
+  g.drawImage(town, 0, 0)
+
+  // twinkling glints, drifting slowly
+  for (const s of sparkles) {
+    const on = Math.sin(t * 1.5 + s.phase)
+    if (on < 0.2) continue
+    g.fillStyle = on > 0.8 ? '#cfeaff' : '#7fc0f5'
+    g.fillRect(Math.round((s.x + t * 2) % W), Math.round(s.y), s.len, 1)
+  }
+
+  // foam washing along the shore
+  g.fillStyle = 'rgba(255, 255, 255, 0.8)'
+  const wash = Math.floor(t * 4)
+  for (let x = 0; x < W; x++) {
+    if ((x + wash) % 9 < 5) g.fillRect(x, Math.round(coastY(x, W, H)) + 5, 1, 1)
+  }
+
+  // windmill blades going round
+  g.fillStyle = '#f7f5ec'
+  for (const m of mills) {
+    const a0 = (reduceMotion ? 0 : t * 1.2) + m.spin
+    for (let k = 0; k < 4; k++) {
+      const a = a0 + (k * Math.PI) / 2
+      for (let d = m.u; d <= m.len; d++) {
+        g.fillRect(Math.round(m.x + Math.cos(a) * d), Math.round(m.y + Math.sin(a) * d), m.u, m.u)
+      }
+    }
+    g.fillStyle = '#7a4a2a'
+    g.fillRect(m.x, m.y, m.u, m.u)
+    g.fillStyle = '#f7f5ec'
+  }
+
+  // the ship, tied up next to the dock and rocking gently
+  const s = shipSize(W)
+  const bob = reduceMotion ? 0 : Math.sin(t * 1.6)
+  drawShip(g, dock.shipX, dock.y + s * 1.3, s, bob)
+}
+
+function shipSize(W) {
+  return Math.min(70, Math.max(40, W * PIXEL * 0.06)) / PIXEL
+}
+
+function drawShip(ctx, x, y, s, bob) {
+  // a little pirate ship with a sheep figurehead and a straw hat flag. s is its size,
+  // everything is drawn in units of s
   ctx.save()
-  ctx.translate(shipX, height * HORIZON + s * 0.08 + bob * 2)
+  ctx.translate(Math.round(x), Math.round(y + bob * 0.6))
   ctx.rotate(bob * 0.04)
   ctx.scale(s, s)
   ctx.lineJoin = 'round'
@@ -163,8 +360,8 @@ function drawShip(t, dt) {
   ctx.restore()
 
   // the sea in front of the bottom of the hull, so it sits in the water
-  ctx.fillStyle = '#2f9be0'
-  ctx.fillRect(shipX - s * 1.2, height * HORIZON + s * 0.22 + bob * 2, s * 2.4, s * 0.15)
+  ctx.fillStyle = '#2879d4'
+  ctx.fillRect(Math.round(x - s * 1.2), Math.round(y + s * 0.22 + bob * 0.6), Math.round(s * 2.4), Math.ceil(s * 0.15))
 }
 
 let last = performance.now()
@@ -175,9 +372,9 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000)
   last = now
 
-  ctx.clearRect(0, 0, width, height)
-  drawWaves(now / 1000)
-  drawShip(now / 1000, dt)
+  // background small, then blown up with sharp pixels
+  drawTown(bgCtx, bg.width, bg.height, now / 1000)
+  ctx.drawImage(bg, 0, 0, bg.width * PIXEL, bg.height * PIXEL)
   for (const f of fruits) {
     f.y += f.vy * dt
     f.rot += f.vr * dt
