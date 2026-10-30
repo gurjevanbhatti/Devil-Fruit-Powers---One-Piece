@@ -118,7 +118,8 @@ html, body {
   line-height: 1;
 }
 
-#start button {
+#start button,
+#start .button {
   font: inherit;
   font-family: 'Bangers', system-ui, sans-serif;
   font-size: 26px;
@@ -133,7 +134,29 @@ html, body {
   transition: transform 0.1s, box-shadow 0.1s;
 }
 
-#start button:hover { transform: translateY(-2px); box-shadow: 0 7px 0 #3a2214; }
-#start button:active { transform: translateY(4px); box-shadow: 0 1px 0 #3a2214; }
+#start .button { text-decoration: none; }
+
+#start button:hover,
+#start .button:hover { transform: translateY(-2px); box-shadow: 0 7px 0 #3a2214; }
+#start button:active,
+#start .button:active { transform: translateY(4px); box-shadow: 0 1px 0 #3a2214; }
+
+/* the quieter "how to play" link under the main button */
+#start .secondary {
+  font-family: 'Bangers', system-ui, sans-serif;
+  font-size: 20px;
+  letter-spacing: 1.5px;
+  padding: 6px 20px;
+  border: 3px solid #3a2214;
+  border-radius: 999px;
+  background: #fff8e6;
+  color: #3a2214;
+  text-decoration: none;
+  box-shadow: 0 4px 0 #3a2214;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+#start .secondary:hover { transform: translateY(-2px); box-shadow: 0 6px 0 #3a2214; }
+#start .secondary:active { transform: translateY(3px); box-shadow: 0 1px 0 #3a2214; }
 
 #start small { opacity: 0.75; min-height: 1em; }

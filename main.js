@@ -34,9 +34,10 @@ const RIGHT_ARM = [14, 16, 18, 20, 22]
 const COLS = 80
 const ROWS = 60
 
-// spring tuning. lower damping = more wobble when you let go
-const STIFFNESS = 0.16
-const DAMPING = 0.84
+// how much of the way to where it should be the skin moves each frame. no springs, so
+// it slides smoothly back to normal when you let go instead of bouncing around
+const FOLLOW = 0.25 // while you're pulling
+const SETTLE = 0.2 // after you let go
 
 const video = document.getElementById('cam')
 const glCanvas = document.getElementById('gl')
@@ -75,8 +76,12 @@ void main() {
 const fragSrc = `
 precision mediump float;
 uniform sampler2D tex;
+uniform sampler2D mask;
+uniform float useMask;
 varying vec2 uv;
 void main() {
+  // the arm layer only draws you, never the background, so your curtains stay put
+  if (useMask > 0.5 && texture2D(mask, uv).r < 0.5) discard;
   gl_FragColor = texture2D(tex, uv);
 }`
 
@@ -97,7 +102,8 @@ gl.useProgram(prog)
 const vertCount = (COLS + 1) * (ROWS + 1)
 const rest = new Float32Array(vertCount * 2)
 const offset = new Float32Array(vertCount * 2)
-const vel = new Float32Array(vertCount * 2)
+// arm stretches get their own layer, drawn on top with the background cut out
+const armOffset = new Float32Array(vertCount * 2)
 
 for (let r = 0; r <= ROWS; r++) {
   for (let c = 0; c <= COLS; c++) {
@@ -130,8 +136,11 @@ function attrib(name, data, usage) {
   return buf
 }
 
-attrib('rest', rest, gl.STATIC_DRAW)
+const restBuf = attrib('rest', rest, gl.STATIC_DRAW)
+const restLoc = gl.getAttribLocation(prog, 'rest')
 const offsetBuf = attrib('offset', offset, gl.DYNAMIC_DRAW)
+const armOffsetBuf = attrib('offset', armOffset, gl.DYNAMIC_DRAW)
+const offsetLoc = gl.getAttribLocation(prog, 'offset')
 
 const indexBuf = gl.createBuffer()
 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuf)
@@ -146,6 +155,174 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+
+// which pixels are you (255) and which are background (0), from the segmenter.
+// starts as "all you" so it still works if the models didn't load
+const maskTex = gl.createTexture()
+gl.activeTexture(gl.TEXTURE1)
+gl.bindTexture(gl.TEXTURE_2D, maskTex)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 1, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, new Uint8Array([255]))
+gl.activeTexture(gl.TEXTURE0)
+gl.uniform1i(gl.getUniformLocation(prog, 'tex'), 0)
+gl.uniform1i(gl.getUniformLocation(prog, 'mask'), 1)
+const useMaskLoc = gl.getUniformLocation(prog, 'useMask')
+
+let personMask = null
+
+function updatePersonMask() {
+  const res = segmenter.segmentForVideo(video, performance.now())
+  const m = res.categoryMask
+  const cats = m.getAsUint8Array()
+  if (!personMask || personMask.length !== cats.length) personMask = new Uint8Array(cats.length)
+  for (let i = 0; i < cats.length; i++) personMask[i] = cats[i] === 0 ? 0 : 255 // 0 is background
+  const w = m.width
+  const h = m.height
+  res.close()
+  gl.activeTexture(gl.TEXTURE1)
+  gl.bindTexture(gl.TEXTURE_2D, maskTex)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, w, h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, personMask)
+  gl.activeTexture(gl.TEXTURE0)
+}
+
+// ---------- erase (fill) ----------
+
+// paints over where your real arm and hand are while the arm is stretched, so you only
+// see the stretched one.
+// the hole is filled like OpenCV's inpaint: the camera image is shrunk step by step
+// ignoring the hole, then grown back up filling the hole from the smaller copies, so
+// the colours all around it blend in from every side ("push-pull" fill)
+const FILL_WIDTH = 320 // the fill is smooth anyway, so it's worked out on a small copy
+
+// everything here draws shapes given in screen coords (0..1, y down)
+const fillVert = `
+attribute vec2 pos;
+varying vec2 sc;
+void main() {
+  sc = pos;
+  gl_Position = vec4(pos.x * 2.0 - 1.0, 1.0 - pos.y * 2.0, 0.0, 1.0);
+}`
+
+const fillShaders = {
+  // the camera image, as you see it on screen
+  copy: `
+precision mediump float;
+uniform sampler2D src;
+varying vec2 sc;
+void main() {
+  gl_FragColor = vec4(texture2D(src, vec2(1.0 - sc.x, sc.y)).rgb, 1.0);
+}`,
+  // cuts the hole out (alpha 0 = unknown)
+  hole: `
+precision mediump float;
+void main() {
+  gl_FragColor = vec4(0.0);
+}`,
+  // half size: one linear sample between 4 pixels averages them. colours are
+  // multiplied by alpha, so the hole doesn't darken the average
+  down: `
+precision mediump float;
+uniform sampler2D src;
+uniform vec2 srcSize;
+void main() {
+  gl_FragColor = texture2D(src, gl_FragCoord.xy * 2.0 / srcSize);
+}`,
+  // the smallest copy, turned back into plain colour
+  top: `
+precision mediump float;
+uniform sampler2D src;
+uniform vec2 size;
+void main() {
+  vec4 c = texture2D(src, gl_FragCoord.xy / size);
+  gl_FragColor = vec4(c.rgb / max(c.a, 0.004), 1.0);
+}`,
+  // keep what's known at this size, fill the rest from the filled copy one size smaller
+  up: `
+precision mediump float;
+uniform sampler2D src;
+uniform sampler2D coarse;
+uniform vec2 size;
+void main() {
+  vec4 f = texture2D(src, gl_FragCoord.xy / size);
+  vec3 c = texture2D(coarse, gl_FragCoord.xy / size).rgb;
+  gl_FragColor = vec4(f.rgb + (1.0 - f.a) * c, 1.0);
+}`,
+  // finally, paint the filled image over the hole on screen
+  paint: `
+precision mediump float;
+uniform sampler2D src;
+varying vec2 sc;
+void main() {
+  gl_FragColor = vec4(texture2D(src, vec2(sc.x, 1.0 - sc.y)).rgb, 1.0);
+}`,
+}
+
+const fill = {}
+for (const [name, frag] of Object.entries(fillShaders)) {
+  const pr = gl.createProgram()
+  gl.attachShader(pr, compile(gl.VERTEX_SHADER, fillVert))
+  gl.attachShader(pr, compile(gl.FRAGMENT_SHADER, frag))
+  gl.linkProgram(pr)
+  const uniforms = {}
+  for (const u of ['src', 'coarse', 'srcSize', 'size']) uniforms[u] = gl.getUniformLocation(pr, u)
+  fill[name] = { prog: pr, pos: gl.getAttribLocation(pr, 'pos'), u: uniforms }
+}
+const fillBuf = gl.createBuffer()
+const screenQuad = [0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1]
+
+let pyramid = null // [{ w, h, push: {tex, fb}, filled: {tex, fb} }] biggest first
+
+function makeTarget(w, h) {
+  const t = gl.createTexture()
+  gl.bindTexture(gl.TEXTURE_2D, t)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+  const fb = gl.createFramebuffer()
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb)
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0)
+  return { tex: t, fb }
+}
+
+function buildPyramid() {
+  pyramid = []
+  let w = FILL_WIDTH
+  let h = Math.max(1, Math.round(FILL_WIDTH / aspect))
+  for (;;) {
+    pyramid.push({ w, h, push: makeTarget(w, h), filled: makeTarget(w, h) })
+    if (w === 1 && h === 1) break
+    w = Math.max(1, Math.ceil(w / 2))
+    h = Math.max(1, Math.ceil(h / 2))
+  }
+  pyramid.aspect = aspect
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+}
+
+function fillPass(name, verts, target, level, setup) {
+  const f = fill[name]
+  gl.useProgram(f.prog)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null)
+  if (target) gl.viewport(0, 0, level.w, level.h)
+  else gl.viewport(0, 0, glCanvas.width, glCanvas.height)
+  setup?.(f.u)
+  gl.bindBuffer(gl.ARRAY_BUFFER, fillBuf)
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STREAM_DRAW)
+  gl.enableVertexAttribArray(f.pos)
+  gl.vertexAttribPointer(f.pos, 2, gl.FLOAT, false, 0, 0)
+  gl.drawArrays(gl.TRIANGLES, 0, verts.length / 2)
+  gl.disableVertexAttribArray(f.pos)
+}
+
+function bindTex(unit, t) {
+  gl.activeTexture(gl.TEXTURE0 + unit)
+  gl.bindTexture(gl.TEXTURE_2D, t)
+}
 
 // ---------- sizing ----------
 
@@ -318,9 +495,17 @@ glCanvas.addEventListener('pointercancel', (e) => endGrab('p' + e.pointerId))
 
 const pinching = [false, false]
 let pinchPoints = []
+let handPoints = [] // every hand's 21 points in screen space, for the H guides
+
+// press H to show what the camera thinks your hands are doing
+let showHands = false
+addEventListener('keydown', (e) => {
+  if (e.key === 'h' || e.key === 'H') showHands = !showHands
+})
 
 function updateHands(result) {
   pinchPoints = []
+  handPoints = result.landmarks.map((hand) => hand.map((p) => ({ x: 1 - p.x, y: p.y })))
   const seen = [false, false]
 
   result.landmarks.forEach((hand, h) => {
@@ -427,8 +612,38 @@ function updateArms(dt) {
 
 // ---------- physics ----------
 
+function targets(list, i) {
+  let tx = 0
+  let ty = 0
+  for (const a of list) {
+    let cx = a.ax
+    let cy = a.ay
+    let ramp = 1
+    if (a.root) {
+      // closest point on the shoulder -> hand line, and how far along it we are
+      const px = (rest[i] - a.root.x) * aspect
+      const py = rest[i + 1] - a.root.y
+      ramp = Math.max(0, Math.min(1, (px * a.rx + py * a.ry) / a.rlen2))
+      cx = a.root.x + (a.ax - a.root.x) * ramp
+      cy = a.root.y + (a.ay - a.root.y) * ramp
+    }
+    const ddx = (rest[i] - cx) * aspect
+    const ddy = rest[i + 1] - cy
+    const w = ramp * Math.exp(-(ddx * ddx + ddy * ddy) / a.s2)
+    tx += a.dx * w
+    ty += a.dy * w
+  }
+  return [tx, ty]
+}
+
+let armMoving = false
+let armAmount = 0 // how far the arm layer is stretched, in screen heights
+let lastArm = null // the arm being stretched (kept while it slides back)
+
 function step() {
-  const active = [...grabs.values()].map((g) => {
+  const pulls = []
+  const arms = []
+  for (const g of grabs.values()) {
     const [ax, ay] = anchor(g)
     const dx = g.x - ax
     const dy = g.y - ay
@@ -436,43 +651,156 @@ function step() {
     const root = g.attach.kind === 'arm' && pose ? pose[g.attach.arm.shoulder] : null
     const rx = root ? (ax - root.x) * aspect : 0
     const ry = root ? ay - root.y : 0
-    return { ax, ay, dx, dy, s2: 2 * g.sigma * g.sigma, root, rx, ry, rlen2: rx * rx + ry * ry || 1 }
-  })
-
-  for (let i = 0; i < vertCount * 2; i += 2) {
-    let tx = 0
-    let ty = 0
-    for (const a of active) {
-      let cx = a.ax
-      let cy = a.ay
-      let ramp = 1
-      if (a.root) {
-        // closest point on the shoulder -> hand line, and how far along it we are
-        const px = (rest[i] - a.root.x) * aspect
-        const py = rest[i + 1] - a.root.y
-        ramp = Math.max(0, Math.min(1, (px * a.rx + py * a.ry) / a.rlen2))
-        cx = a.root.x + (a.ax - a.root.x) * ramp
-        cy = a.root.y + (a.ay - a.root.y) * ramp
-      }
-      const ddx = (rest[i] - cx) * aspect
-      const ddy = rest[i + 1] - cy
-      const w = ramp * Math.exp(-(ddx * ddx + ddy * ddy) / a.s2)
-      tx += a.dx * w
-      ty += a.dy * w
-    }
-    vel[i] = (vel[i] + (tx - offset[i]) * STIFFNESS) * DAMPING
-    vel[i + 1] = (vel[i + 1] + (ty - offset[i + 1]) * STIFFNESS) * DAMPING
-    offset[i] += vel[i]
-    offset[i + 1] += vel[i + 1]
+    const a = { ax, ay, dx, dy, s2: 2 * g.sigma * g.sigma, root, rx, ry, rlen2: rx * rx + ry * ry || 1 }
+    ;(g.attach.kind === 'arm' ? arms : pulls).push(a)
+    if (g.attach.kind === 'arm') lastArm = g.attach.arm
   }
+
+  let biggest = 0
+  for (let i = 0; i < vertCount * 2; i += 2) {
+    const [tx, ty] = targets(pulls, i)
+    const rate = pulls.length ? FOLLOW : SETTLE
+    offset[i] += (tx - offset[i]) * rate
+    offset[i + 1] += (ty - offset[i + 1]) * rate
+
+    const [ax, ay] = targets(arms, i)
+    const armRate = arms.length ? FOLLOW : SETTLE
+    armOffset[i] += (ax - armOffset[i]) * armRate
+    armOffset[i + 1] += (ay - armOffset[i + 1]) * armRate
+    biggest = Math.max(biggest, Math.abs(armOffset[i]), Math.abs(armOffset[i + 1]))
+  }
+  armMoving = arms.length > 0 || biggest > 0.001
+  armAmount = biggest
+}
+
+// ---------- filling in the real arm ----------
+
+function armHoles() {
+  // your real forearm and hand, as fat lines, fading in as the arm stretches so there's
+  // no blurry patch when it's back to normal
+  if (!armMoving || !lastArm || !pose) return []
+  const fade = Math.min(1, armAmount / 0.03)
+  if (fade <= 0) return []
+  const E = pose[lastArm.elbow]
+  const W = pose[lastArm.wrist]
+  const I = pose[lastArm.index]
+  const fore = Math.hypot((W.x - E.x) * aspect, W.y - E.y)
+  // carry on past the index knuckle to cover your fingers too
+  const tip = { x: I.x + (I.x - W.x) * 1.2, y: I.y + (I.y - W.y) * 1.2 }
+  return [
+    { from: [E.x, E.y], to: [W.x, W.y], w: fore * 0.55 * fade },
+    { from: [W.x, W.y], to: [tip.x, tip.y], w: fore * 0.9 * fade },
+  ]
+}
+
+function eraseVerts(e, out) {
+  // a fat line over where the finger / arm really is, in screen coords
+  const dx = (e.to[0] - e.from[0]) * aspect
+  const dy = e.to[1] - e.from[1]
+  const len = Math.hypot(dx, dy)
+  if (len < 0.001) return
+  const half = e.w / 2
+  const px = dy / len / aspect
+  const py = -dx / len
+  // a bit past both ends so the knuckle and fingertip are covered too
+  const ext = half / len
+  const t0 = -ext
+  const t1 = 1 + ext
+  const at = (t, side) => [
+    e.from[0] + (e.to[0] - e.from[0]) * t + px * half * side,
+    e.from[1] + (e.to[1] - e.from[1]) * t + py * half * side,
+  ]
+  const [a, b, c, d] = [at(t0, 1), at(t0, -1), at(t1, 1), at(t1, -1)]
+  out.push(...a, ...b, ...c, ...b, ...d, ...c)
+}
+
+function drawErase() {
+  const hole = []
+  for (const e of armHoles()) eraseVerts(e, hole)
+  if (!hole.length) return
+  if (!pyramid || pyramid.aspect !== aspect) buildPyramid()
+
+  gl.disable(gl.DEPTH_TEST)
+  const top = pyramid.length - 1
+
+  // the camera image at the biggest size, with the hole cut out
+  bindTex(0, tex)
+  fillPass('copy', screenQuad, pyramid[0].push, pyramid[0], (u) => gl.uniform1i(u.src, 0))
+  fillPass('hole', hole, pyramid[0].push, pyramid[0])
+
+  // shrink it down, ignoring the hole
+  for (let i = 1; i <= top; i++) {
+    const from = pyramid[i - 1]
+    bindTex(0, from.push.tex)
+    fillPass('down', screenQuad, pyramid[i].push, pyramid[i], (u) => {
+      gl.uniform1i(u.src, 0)
+      gl.uniform2f(u.srcSize, from.w, from.h)
+    })
+  }
+
+  // grow it back up, filling the hole from the smaller copy each time
+  bindTex(0, pyramid[top].push.tex)
+  fillPass('top', screenQuad, pyramid[top].filled, pyramid[top], (u) => {
+    gl.uniform1i(u.src, 0)
+    gl.uniform2f(u.size, pyramid[top].w, pyramid[top].h)
+  })
+  for (let i = top - 1; i >= 0; i--) {
+    const lvl = pyramid[i]
+    bindTex(0, lvl.push.tex)
+    bindTex(1, pyramid[i + 1].filled.tex)
+    fillPass('up', screenQuad, lvl.filled, lvl, (u) => {
+      gl.uniform1i(u.src, 0)
+      gl.uniform1i(u.coarse, 1)
+      gl.uniform2f(u.size, lvl.w, lvl.h)
+    })
+  }
+
+  // paint the filled image over the hole on screen
+  bindTex(0, pyramid[0].filled.tex)
+  fillPass('paint', hole, null, null, (u) => gl.uniform1i(u.src, 0))
+
+  // put things back how the rest of the drawing expects them
+  bindTex(1, null)
+  bindTex(0, tex)
+  gl.enable(gl.DEPTH_TEST)
 }
 
 // ---------- drawing ----------
+
+// how the 21 hand points join up, for the H guides
+const HAND_BONES = [
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  [5, 9], [9, 10], [10, 11], [11, 12],
+  [9, 13], [13, 14], [14, 15], [15, 16],
+  [13, 17], [17, 18], [18, 19], [19, 20],
+  [0, 17],
+]
+const FINGERTIPS = [4, 8, 12, 16, 20]
 
 function drawHud() {
   const w = hud.width
   const h = hud.height
   ctx.clearRect(0, 0, w, h)
+
+  if (showHands) {
+    for (const hand of handPoints) {
+      ctx.lineWidth = Math.max(2, h * 0.004)
+      ctx.strokeStyle = 'rgba(46, 204, 113, 0.9)'
+      for (const [a, b] of HAND_BONES) {
+        ctx.beginPath()
+        ctx.moveTo(hand[a].x * w, hand[a].y * h)
+        ctx.lineTo(hand[b].x * w, hand[b].y * h)
+        ctx.stroke()
+      }
+      hand.forEach((p, i) => {
+        ctx.beginPath()
+        ctx.arc(p.x * w, p.y * h, Math.max(3, h * 0.006), 0, Math.PI * 2)
+        ctx.fillStyle = FINGERTIPS.includes(i) ? '#e63946' : '#f4c430'
+        ctx.fill()
+      })
+    }
+  }
 
   for (const p of pinchPoints) {
     ctx.beginPath()
@@ -515,13 +843,44 @@ function loop() {
 
   updateArms(dt)
   step()
+  // only work out which pixels are you while an arm is stretching, it isn't free
+  if (segmenter && armMoving) updatePersonMask()
 
   gl.bindTexture(gl.TEXTURE_2D, tex)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video)
+
+  // the whole picture, with face / body pulls
+  gl.useProgram(prog)
+  gl.enableVertexAttribArray(restLoc)
+  gl.bindBuffer(gl.ARRAY_BUFFER, restBuf)
+  gl.vertexAttribPointer(restLoc, 2, gl.FLOAT, false, 0, 0)
+  gl.enableVertexAttribArray(offsetLoc)
   gl.bindBuffer(gl.ARRAY_BUFFER, offsetBuf)
   gl.bufferSubData(gl.ARRAY_BUFFER, 0, offset)
+  gl.vertexAttribPointer(offsetLoc, 2, gl.FLOAT, false, 0, 0)
+  gl.uniform1f(useMaskLoc, 0)
   gl.clear(gl.DEPTH_BUFFER_BIT)
   gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
+
+  // then a stretched arm on top, just you with the background cut out, so the
+  // background underneath never moves
+  if (armMoving) {
+    drawErase()
+    // the fill used its own shaders, so set the mesh back up
+    gl.useProgram(prog)
+    gl.enableVertexAttribArray(restLoc)
+    gl.bindBuffer(gl.ARRAY_BUFFER, restBuf)
+    gl.vertexAttribPointer(restLoc, 2, gl.FLOAT, false, 0, 0)
+    bindTex(1, maskTex)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.enableVertexAttribArray(offsetLoc)
+    gl.bindBuffer(gl.ARRAY_BUFFER, armOffsetBuf)
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, armOffset)
+    gl.vertexAttribPointer(offsetLoc, 2, gl.FLOAT, false, 0, 0)
+    gl.uniform1f(useMaskLoc, 1)
+    gl.clear(gl.DEPTH_BUFFER_BIT)
+    gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
+  }
 
   drawHud()
   requestAnimationFrame(loop)
