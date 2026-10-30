@@ -25,7 +25,7 @@ html, body {
 
 #cam { display: none; }
 
-/* plain background, so the sign and the chest stand out */
+/* plain tan background, so the sign and the chest stand out */
 #start {
   position: fixed;
   inset: 0;
@@ -34,14 +34,7 @@ html, body {
   padding: 16px;
   overflow-y: auto; /* the card can be taller than a phone screen */
   text-align: center;
-  background: #0b2a55;
-}
-
-#fruits {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  background: #f3e3c3;
 }
 
 #start .card {
@@ -209,10 +202,7 @@ html, body {
   border-radius: 999px;
 }
 
-#start .showcase small {
-  color: #fff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-}
+#start .showcase small { color: #3a2214; }
 
 .chest .fruit,
 .chest .spark {
