@@ -25,7 +25,7 @@ html, body {
 
 #cam { display: none; }
 
-/* sunset sky over the sea */
+/* plain background, so the sign and the chest stand out */
 #start {
   position: fixed;
   inset: 0;
@@ -34,14 +34,7 @@ html, body {
   padding: 16px;
   overflow-y: auto; /* the card can be taller than a phone screen */
   text-align: center;
-  background: linear-gradient(
-    #ffd77a 0%,
-    #ffa35c 38%,
-    #ff7a59 58%,
-    #2f9be0 58.5%,
-    #1667a8 78%,
-    #0b3d6b 100%
-  );
+  background: #0b2a55;
 }
 
 #fruits {
