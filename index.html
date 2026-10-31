@@ -63,14 +63,6 @@
 
       <!-- the fruit in its treasure chest, on a table. pixel art, one unit = one pixel -->
       <svg class="chest" viewBox="0 -8 96 80" shape-rendering="crispEdges" aria-hidden="true">
-        <defs>
-          <!-- bites taken out of the fruit when you turn the camera on -->
-          <mask id="bites" maskUnits="userSpaceOnUse" x="0" y="-8" width="96" height="80">
-            <rect x="0" y="-8" width="96" height="80" fill="#fff" />
-            <circle class="bite bite1" cx="57" cy="7" r="6" fill="#000" />
-            <circle class="bite bite2" cx="58" cy="17" r="6" fill="#000" />
-          </mask>
-        </defs>
 
         <g class="box">
           <!-- table -->
@@ -119,7 +111,7 @@
         </g>
 
         <!-- the fruit on the cushion -->
-        <g class="fruit" mask="url(#bites)">
+        <g class="fruit">
           <image href="images/fruit.png" x="33" y="-6" width="30" height="32" style="image-rendering: pixelated" />
         </g>
 
