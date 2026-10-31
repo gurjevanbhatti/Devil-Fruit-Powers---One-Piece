@@ -18,52 +18,8 @@
   <div id="start">
     <div class="showcase">
       <h1 class="sign">
-        <!-- title sign in the style of the One Piece logo: chunky gold letters on an arch,
-             dark outline, red ribbon, rope, and my straw hat -->
-        <svg viewBox="0 0 600 240" role="img" aria-label="Gum Gum Cam">
-          <defs>
-            <!-- one gradient over the whole sign, not one per letter -->
-            <linearGradient id="sign-gold" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="150">
-              <stop offset="0" stop-color="#fff38a" />
-              <stop offset="0.45" stop-color="#ffc21a" />
-              <stop offset="1" stop-color="#e8590c" />
-            </linearGradient>
-            <path id="sign-arch" d="M50 160 Q300 40 550 160" />
-            <text id="sign-words" text-anchor="middle" textLength="440" lengthAdjust="spacingAndGlyphs">
-              <textPath href="#sign-arch" startOffset="50%">GUM GUM</textPath>
-            </text>
-          </defs>
-
-          <!-- rope swinging along behind the ribbon -->
-          <g fill="none" stroke-linecap="round">
-            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#3a2214" stroke-width="12" />
-            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#c8924f" stroke-width="7" />
-            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#7a4a22" stroke-width="7" stroke-dasharray="3 6" />
-          </g>
-
-          <!-- the letters: dark outline, white gap, gold fill. written once and reused for
-               each layer, so the three layers always line up exactly -->
-          <g font-family="Bangers, system-ui, sans-serif" font-size="124" stroke-linejoin="round">
-            <use href="#sign-words" fill="#2b1408" stroke="#2b1408" stroke-width="22" />
-            <use href="#sign-words" fill="#fff" stroke="#fff" stroke-width="9" />
-            <use href="#sign-words" fill="url(#sign-gold)" stroke="none" />
-          </g>
-
-          <!-- red ribbon with the tails folded back -->
-          <g stroke="#2b1408" stroke-width="5" stroke-linejoin="round">
-            <path d="M178 182 L140 182 L156 202 L140 222 L200 222 Z" fill="#8f0b1f" />
-            <path d="M422 182 L460 182 L444 202 L460 222 L400 222 Z" fill="#8f0b1f" />
-            <path d="M196 168 Q300 156 404 168 L404 214 Q300 202 196 214 Z" fill="#d7192f" />
-          </g>
-          <g font-family="Bangers, system-ui, sans-serif" font-size="46" text-anchor="middle" stroke-linejoin="round">
-            <text x="300" y="206" fill="#2b1408" stroke="#2b1408" stroke-width="8" letter-spacing="10">CAM</text>
-            <text x="300" y="206" fill="#fff" letter-spacing="10">CAM</text>
-          </g>
-
-          <!-- my pixel art straw hat, tipped on the first letter -->
-          <image href="images/hat.png" x="40" y="22" width="120" height="58"
-                 transform="rotate(-22 100 51)" style="image-rendering: pixelated" />
-        </svg>
+        <!-- title sign in the style of the One Piece logo, as pixel art -->
+        <img src="images/sign.png" alt="Gum Gum Cam" />
       </h1>
 
       <!-- the fruit in its treasure chest, on a table. pixel art, one unit = one pixel -->
@@ -128,7 +84,7 @@
         </g>
       </svg>
 
-      <p class="tagline">pinch your cheek (or click + drag it) and pull</p>
+      <p class="tagline">turn on your camera to get devil fruit powers like Luffy!</p>
       <button id="go">turn on camera</button>
       <a class="secondary" href="instructions.html">how to play</a>
       <small id="status"></small>

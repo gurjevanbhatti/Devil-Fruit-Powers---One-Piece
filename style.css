@@ -72,16 +72,16 @@ html, body {
   -webkit-text-stroke: 0;
 }
 
-#start h1.sign svg {
+#start h1.sign img {
   display: block;
   width: 100%;
   height: auto;
-  overflow: visible;
+  image-rendering: pixelated;
   transform-origin: 15% 60%;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  #start h1.sign:hover svg { animation: boing 0.6s ease-out; }
+  #start h1.sign:hover img { animation: boing 0.6s ease-out; }
 }
 
 @keyframes boing {

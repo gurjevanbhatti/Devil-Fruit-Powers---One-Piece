@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 240">
+  <!-- the title sign, drawn smooth. images/sign.png is this shrunk down to pixel art -->
+  <style>@import url("https://fonts.googleapis.com/css2?family=Bangers&amp;display=swap");</style>
+  <defs>
+    <!-- one gradient over the whole sign, not one per letter -->
+    <linearGradient id="sign-gold" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="150">
+      <stop offset="0" stop-color="#fff38a" />
+      <stop offset="0.45" stop-color="#ffc21a" />
+      <stop offset="1" stop-color="#e8590c" />
+    </linearGradient>
+    <path id="sign-arch" d="M50 160 Q300 40 550 160" />
+    <text id="sign-words" text-anchor="middle" textLength="440" lengthAdjust="spacingAndGlyphs">
+      <textPath href="#sign-arch" startOffset="50%">GUM GUM</textPath>
+    </text>
+  </defs>
+
+  <!-- rope swinging along behind the ribbon -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#3a2214" stroke-width="12" />
+    <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#c8924f" stroke-width="7" />
+    <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#7a4a22" stroke-width="7" stroke-dasharray="3 6" />
+  </g>
+
+  <!-- the letters: dark outline, white gap, gold fill. written once and reused for
+       each layer, so the three layers always line up exactly -->
+  <g font-family="Bangers, system-ui, sans-serif" font-size="124" stroke-linejoin="round">
+    <use href="#sign-words" fill="#2b1408" stroke="#2b1408" stroke-width="22" />
+    <use href="#sign-words" fill="#fff" stroke="#fff" stroke-width="9" />
+    <use href="#sign-words" fill="url(#sign-gold)" stroke="none" />
+  </g>
+
+  <!-- red ribbon with the tails folded back -->
+  <g stroke="#2b1408" stroke-width="5" stroke-linejoin="round">
+    <path d="M178 182 L140 182 L156 202 L140 222 L200 222 Z" fill="#8f0b1f" />
+    <path d="M422 182 L460 182 L444 202 L460 222 L400 222 Z" fill="#8f0b1f" />
+    <path d="M196 168 Q300 156 404 168 L404 214 Q300 202 196 214 Z" fill="#d7192f" />
+  </g>
+  <g font-family="Bangers, system-ui, sans-serif" font-size="56" text-anchor="middle" stroke-linejoin="round">
+    <text x="300" y="209" fill="#2b1408" stroke="#2b1408" stroke-width="10" letter-spacing="8">CAM</text>
+    <text x="300" y="209" fill="#fff" letter-spacing="8">CAM</text>
+  </g>
+</svg>
