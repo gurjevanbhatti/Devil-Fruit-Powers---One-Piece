@@ -23,23 +23,6 @@ html, body {
 
 #hud { pointer-events: none; }
 
-/* the little Gum Gum sign in the top left while you play */
-#corner-sign {
-  position: fixed;
-  top: 10px;
-  left: 16px;
-  width: min(200px, 34vw);
-  pointer-events: none;
-}
-
-#corner-sign svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  overflow: visible;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
-}
-
 /* face / arm / fingers picker and the tracking switch, top right */
 #controls {
   position: fixed;

@@ -1283,8 +1283,6 @@ document.getElementById('go').addEventListener('click', async () => {
     faceLandmarker = handLandmarker = poseLandmarker = segmenter = null
   }
 
-  // keep the sign, shrunk into the top left corner
-  document.getElementById('corner-sign').append(startScreen.querySelector('h1.sign svg'))
   startScreen.remove()
   resize()
   requestAnimationFrame(loop)
