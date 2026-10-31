@@ -18,69 +18,71 @@
   <div id="start">
     <div class="showcase">
       <h1 class="sign">
-        <!-- title sign in the style of the One Piece logo, as pixel art -->
-        <img src="images/sign.png" alt="Gum Gum Cam" />
+        <!-- title sign in the style of the One Piece logo: chunky gold letters on an arch,
+             dark outline, red ribbon and rope -->
+        <svg viewBox="0 0 600 240" role="img" aria-label="Gum Gum Cam">
+          <defs>
+            <!-- one gradient over the whole sign, not one per letter -->
+            <linearGradient id="sign-gold" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="150">
+              <stop offset="0" stop-color="#fff38a" />
+              <stop offset="0.45" stop-color="#ffc21a" />
+              <stop offset="1" stop-color="#e8590c" />
+            </linearGradient>
+            <path id="sign-arch" d="M50 160 Q300 40 550 160" />
+            <text id="sign-words" text-anchor="middle" textLength="440" lengthAdjust="spacingAndGlyphs">
+              <textPath href="#sign-arch" startOffset="50%">GUM GUM</textPath>
+            </text>
+          </defs>
+
+          <!-- rope swinging along behind the ribbon -->
+          <g fill="none" stroke-linecap="round">
+            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#3a2214" stroke-width="12" />
+            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#c8924f" stroke-width="7" />
+            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#7a4a22" stroke-width="7" stroke-dasharray="3 6" />
+          </g>
+
+          <!-- the letters: dark outline, white gap, gold fill. written once and reused for
+               each layer, so the three layers always line up exactly -->
+          <g font-family="Bangers, system-ui, sans-serif" font-size="124" stroke-linejoin="round">
+            <use href="#sign-words" fill="#2b1408" stroke="#2b1408" stroke-width="22" />
+            <use href="#sign-words" fill="#fff" stroke="#fff" stroke-width="9" />
+            <use href="#sign-words" fill="url(#sign-gold)" stroke="none" />
+          </g>
+
+          <!-- red ribbon with the tails folded back -->
+          <g stroke="#2b1408" stroke-width="5" stroke-linejoin="round">
+            <path d="M178 182 L140 182 L156 202 L140 222 L200 222 Z" fill="#8f0b1f" />
+            <path d="M422 182 L460 182 L444 202 L460 222 L400 222 Z" fill="#8f0b1f" />
+            <path d="M196 168 Q300 156 404 168 L404 214 Q300 202 196 214 Z" fill="#d7192f" />
+          </g>
+          <g font-family="Bangers, system-ui, sans-serif" font-size="46" text-anchor="middle" stroke-linejoin="round">
+            <text x="300" y="206" fill="#2b1408" stroke="#2b1408" stroke-width="8" letter-spacing="10">CAM</text>
+            <text x="300" y="206" fill="#fff" letter-spacing="10">CAM</text>
+          </g>
+        </svg>
       </h1>
 
       <!-- the fruit in its treasure chest, on a table. pixel art, one unit = one pixel -->
-      <svg class="chest" viewBox="0 -8 96 80" shape-rendering="crispEdges" aria-hidden="true">
+      <svg class="chest" viewBox="-10 -44 116 116" shape-rendering="crispEdges" aria-hidden="true">
+        <!-- table -->
+        <rect x="-10" y="60" width="116" height="12" fill="#8b5a2b" />
+        <rect x="-10" y="60" width="116" height="2" fill="#b07a3e" />
+        <rect x="-10" y="66" width="116" height="1" fill="#6b4226" />
 
-        <g class="box">
-          <!-- table -->
-          <rect x="0" y="60" width="96" height="12" fill="#8b5a2b" />
-          <rect x="0" y="60" width="96" height="2" fill="#b07a3e" />
-          <rect x="0" y="66" width="96" height="1" fill="#6b4226" />
-          <rect x="10" y="60" width="78" height="2" fill="#5a3418" />
+        <!-- my treasure chest with its red cushion, twice size -->
+        <image href="images/chest.png" x="2" y="-30" width="92" height="90" style="image-rendering: pixelated" />
 
-          <!-- open lid, leaning back -->
-          <rect x="21" y="2" width="54" height="2" fill="#2a160a" />
-          <rect x="15" y="4" width="66" height="2" fill="#2a160a" />
-          <rect x="13" y="6" width="70" height="22" fill="#2a160a" />
-          <rect x="22" y="3" width="52" height="1" fill="#f4c430" />
-          <rect x="16" y="5" width="64" height="1" fill="#f4c430" />
-          <rect x="14" y="6" width="68" height="21" fill="#f4c430" />
-          <rect x="17" y="8" width="62" height="19" fill="#4a2a14" />
-          <rect x="17" y="8" width="62" height="2" fill="#2f1a0c" />
-
-          <!-- red velvet cushion -->
-          <rect x="18" y="23" width="60" height="1" fill="#7e1a20" />
-          <rect x="15" y="24" width="66" height="9" fill="#7e1a20" />
-          <rect x="19" y="24" width="58" height="1" fill="#b8282f" />
-          <rect x="16" y="25" width="64" height="8" fill="#b8282f" />
-          <rect x="22" y="26" width="18" height="2" fill="#e0525a" />
-          <rect x="58" y="26" width="12" height="1" fill="#e0525a" />
-          <rect x="16" y="31" width="2" height="4" fill="#f4c430" />
-          <rect x="78" y="31" width="2" height="4" fill="#f4c430" />
-
-          <!-- chest body -->
-          <rect x="11" y="32" width="74" height="29" fill="#2a160a" />
-          <rect x="12" y="33" width="72" height="27" fill="#8b5a2b" />
-          <rect x="12" y="41" width="72" height="1" fill="#6b4226" />
-          <rect x="12" y="49" width="72" height="1" fill="#6b4226" />
-          <rect x="12" y="57" width="72" height="3" fill="#6b4226" />
-          <rect x="12" y="33" width="72" height="3" fill="#f4c430" />
-          <rect x="12" y="35" width="72" height="1" fill="#c99a1c" />
-          <rect x="12" y="33" width="5" height="27" fill="#f4c430" />
-          <rect x="16" y="33" width="1" height="27" fill="#c99a1c" />
-          <rect x="79" y="33" width="5" height="27" fill="#f4c430" />
-          <rect x="83" y="33" width="1" height="27" fill="#c99a1c" />
-          <!-- lock -->
-          <rect x="42" y="37" width="12" height="12" fill="#2a160a" />
-          <rect x="43" y="38" width="10" height="10" fill="#f4c430" />
-          <rect x="43" y="47" width="10" height="1" fill="#c99a1c" />
-          <rect x="47" y="41" width="2" height="4" fill="#2a160a" />
-        </g>
-
-        <!-- the fruit on the cushion -->
+        <!-- the fruit sitting on the cushion -->
         <g class="fruit">
-          <image href="images/fruit.png" x="33" y="-6" width="30" height="32" style="image-rendering: pixelated" />
+          <image href="images/fruit.png" x="30" y="-24" width="36" height="38" style="image-rendering: pixelated" />
         </g>
 
-        <!-- sparkles -->
-        <g class="sparkles" fill="#e0a800">
-          <path class="spark" d="M26 -2h1v1h1v1h-1v1h-1v-1h-1v-1h1z" />
-          <path class="spark" d="M70 4h1v1h1v1h-1v1h-1v-1h-1v-1h1z" />
-          <path class="spark" d="M30 16h1v1h1v1h-1v1h-1v-1h-1v-1h1z" />
+        <!-- my sparkles -->
+        <g class="sparkles">
+          <image class="spark" href="images/sparkle.png" x="-6" y="-42" width="13" height="16" style="image-rendering: pixelated" />
+          <image class="spark" href="images/sparkle.png" x="88" y="-36" width="13" height="16" style="image-rendering: pixelated" />
+          <image class="spark" href="images/sparkle.png" x="-9" y="20" width="13" height="16" style="image-rendering: pixelated" />
+          <image class="spark" href="images/sparkle.png" x="94" y="10" width="13" height="16" style="image-rendering: pixelated" />
         </g>
       </svg>
 
