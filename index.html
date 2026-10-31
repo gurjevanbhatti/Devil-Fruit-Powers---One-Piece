@@ -18,46 +18,51 @@
   <div id="start">
     <div class="showcase">
       <h1 class="sign">
-        <!-- title sign in the style of the One Piece logo: blue letters, rails, rope, straw hat -->
-        <svg viewBox="0 0 600 200" role="img" aria-label="Gum Gum Cam">
+        <!-- title sign in the style of the One Piece logo: chunky gold letters on an arch,
+             dark outline, red ribbon, rope, and my straw hat -->
+        <svg viewBox="0 0 600 240" role="img" aria-label="Gum Gum Cam">
           <defs>
             <!-- one gradient over the whole sign, not one per letter -->
-            <linearGradient id="sign-blue" gradientUnits="userSpaceOnUse" x1="0" y1="62" x2="0" y2="142">
-              <stop offset="0" stop-color="#9fdcff" />
-              <stop offset="0.55" stop-color="#3a8fd6" />
-              <stop offset="1" stop-color="#1b5fa8" />
+            <linearGradient id="sign-gold" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="150">
+              <stop offset="0" stop-color="#fff38a" />
+              <stop offset="0.45" stop-color="#ffc21a" />
+              <stop offset="1" stop-color="#e8590c" />
             </linearGradient>
-            <text id="sign-words" x="300" y="142" text-anchor="middle" textLength="500"
-                  lengthAdjust="spacingAndGlyphs">GUM GUM CAM</text>
+            <path id="sign-arch" d="M50 160 Q300 40 550 160" />
+            <text id="sign-words" text-anchor="middle" textLength="440" lengthAdjust="spacingAndGlyphs">
+              <textPath href="#sign-arch" startOffset="50%">GUM GUM</textPath>
+            </text>
           </defs>
 
-          <!-- rails above and below, the top one curling up into an arrow -->
-          <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M28 40 H530 q30 0 30 -26" stroke="#0b2a55" stroke-width="12" />
-            <path d="M28 40 H530 q30 0 30 -26" stroke="#5fb4ee" stroke-width="5" />
-            <path d="M28 152 H572" stroke="#0b2a55" stroke-width="12" />
-            <path d="M28 152 H572" stroke="#5fb4ee" stroke-width="5" />
-          </g>
-          <path d="M545 18 L560 2 L574 20 Z" fill="#5fb4ee" stroke="#0b2a55" stroke-width="4" stroke-linejoin="round" />
-
-          <!-- the letters: dark outline, white gap, blue fill. the words are written once and
-               reused for each layer, so the three layers always line up exactly -->
-          <g font-family="Bangers, system-ui, sans-serif" font-size="118" stroke-linejoin="round">
-            <use href="#sign-words" fill="#0b2a55" stroke="#0b2a55" stroke-width="18" />
-            <use href="#sign-words" fill="#fff" stroke="#fff" stroke-width="8" />
-            <use href="#sign-words" fill="url(#sign-blue)" stroke="none" />
-          </g>
-
-          <!-- rope draped along the bottom, hanging off the end -->
+          <!-- rope swinging along behind the ribbon -->
           <g fill="none" stroke-linecap="round">
-            <path id="sign-rope" d="M36 156 Q120 192 205 160 Q300 194 395 160 Q485 192 566 156 Q584 172 576 194" stroke="#3a2214" stroke-width="11" />
-            <path d="M36 156 Q120 192 205 160 Q300 194 395 160 Q485 192 566 156 Q584 172 576 194" stroke="#b07a3e" stroke-width="6" />
-            <path d="M36 156 Q120 192 205 160 Q300 194 395 160 Q485 192 566 156 Q584 172 576 194" stroke="#6b4226" stroke-width="6" stroke-dasharray="3 6" />
+            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#3a2214" stroke-width="12" />
+            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#c8924f" stroke-width="7" />
+            <path d="M24 168 Q160 214 300 186 Q440 214 576 168" stroke="#7a4a22" stroke-width="7" stroke-dasharray="3 6" />
+          </g>
+
+          <!-- the letters: dark outline, white gap, gold fill. written once and reused for
+               each layer, so the three layers always line up exactly -->
+          <g font-family="Bangers, system-ui, sans-serif" font-size="124" stroke-linejoin="round">
+            <use href="#sign-words" fill="#2b1408" stroke="#2b1408" stroke-width="22" />
+            <use href="#sign-words" fill="#fff" stroke="#fff" stroke-width="9" />
+            <use href="#sign-words" fill="url(#sign-gold)" stroke="none" />
+          </g>
+
+          <!-- red ribbon with the tails folded back -->
+          <g stroke="#2b1408" stroke-width="5" stroke-linejoin="round">
+            <path d="M178 182 L140 182 L156 202 L140 222 L200 222 Z" fill="#8f0b1f" />
+            <path d="M422 182 L460 182 L444 202 L460 222 L400 222 Z" fill="#8f0b1f" />
+            <path d="M196 168 Q300 156 404 168 L404 214 Q300 202 196 214 Z" fill="#d7192f" />
+          </g>
+          <g font-family="Bangers, system-ui, sans-serif" font-size="46" text-anchor="middle" stroke-linejoin="round">
+            <text x="300" y="206" fill="#2b1408" stroke="#2b1408" stroke-width="8" letter-spacing="10">CAM</text>
+            <text x="300" y="206" fill="#fff" letter-spacing="10">CAM</text>
           </g>
 
           <!-- my pixel art straw hat, tipped on the first letter -->
-          <image href="images/hat.png" x="22" y="24" width="104" height="50"
-                 transform="rotate(-10 74 49)" style="image-rendering: pixelated" />
+          <image href="images/hat.png" x="40" y="22" width="120" height="58"
+                 transform="rotate(-22 100 51)" style="image-rendering: pixelated" />
         </svg>
       </h1>
 
