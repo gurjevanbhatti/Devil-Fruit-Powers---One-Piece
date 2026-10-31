@@ -37,6 +37,14 @@ html, body {
   background: #f3e3c3;
 }
 
+/* the devil fruit rain, behind the sign and chest */
+#fruits {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
 #start .card {
   position: relative;
   display: flex;

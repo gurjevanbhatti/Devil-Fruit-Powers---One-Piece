@@ -16,6 +16,8 @@
   </div>
 
   <div id="start">
+    <!-- devil fruits raining down behind everything -->
+    <canvas id="fruits"></canvas>
     <div class="showcase">
       <h1 class="sign">
         <!-- title sign in the style of the One Piece logo: chunky gold letters on an arch,
@@ -69,8 +71,8 @@
         <rect x="-10" y="60" width="116" height="2" fill="#b07a3e" />
         <rect x="-10" y="66" width="116" height="1" fill="#6b4226" />
 
-        <!-- my treasure chest with its red cushion, twice size -->
-        <image href="images/chest.png" x="2" y="-30" width="92" height="90" style="image-rendering: pixelated" />
+        <!-- my treasure chest with its red cushion and a black outline, twice size -->
+        <image href="images/chest.png" x="0" y="-34" width="96" height="94" style="image-rendering: pixelated" />
 
         <!-- the fruit sitting on the cushion -->
         <g class="fruit">
@@ -95,5 +97,6 @@
 
   <video id="cam" playsinline muted></video>
   <script type="module" src="main.js"></script>
+  <script type="module" src="fruits.js"></script>
 </body>
 </html>
