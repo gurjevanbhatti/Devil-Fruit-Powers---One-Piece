@@ -3,48 +3,9 @@
 const canvas = document.getElementById('fruits')
 const ctx = canvas.getContext('2d')
 
-// the hand-drawn pixel-art devil fruit, in a different colour for the rain so it
-// doesn't look like the real one in the chest
-const RAIN_HUE = 80 // degrees round the colour wheel from the real purple
+// the hand-drawn pixel-art devil fruit
 const fruitImg = new Image()
-let rainFruit = null
-fruitImg.onload = () => {
-  rainFruit = document.createElement('canvas')
-  rainFruit.width = fruitImg.naturalWidth
-  rainFruit.height = fruitImg.naturalHeight
-  const c = rainFruit.getContext('2d')
-  c.drawImage(fruitImg, 0, 0)
-  const img = c.getImageData(0, 0, rainFruit.width, rainFruit.height)
-  const d = img.data
-  for (let i = 0; i < d.length; i += 4) {
-    // only the purple fruit, so the stem stays the same
-    if (d[i + 2] <= d[i] || d[i + 2] <= d[i + 1]) continue
-    const [r, g, b] = hueShift(d[i], d[i + 1], d[i + 2], RAIN_HUE)
-    d[i] = r
-    d[i + 1] = g
-    d[i + 2] = b
-  }
-  c.putImageData(img, 0, 0)
-}
 fruitImg.src = 'images/fruit.png'
-
-function hueShift(r, g, b, deg) {
-  // turn the colour round the colour wheel, keeping how light it is
-  const a = (deg * Math.PI) / 180
-  const cos = Math.cos(a)
-  const sin = Math.sin(a)
-  const k = 1 / 3
-  const sq = Math.sqrt(k)
-  const m0 = cos + (1 - cos) * k
-  const m1 = k * (1 - cos) - sq * sin
-  const m2 = k * (1 - cos) + sq * sin
-  const clamp = (v) => Math.max(0, Math.min(255, v))
-  return [
-    clamp(r * m0 + g * m1 + b * m2),
-    clamp(r * m2 + g * m0 + b * m1),
-    clamp(r * m1 + g * m2 + b * m0),
-  ]
-}
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -106,7 +67,7 @@ function frame(now) {
     ctx.rotate(f.rot)
     // the drawing is a little taller than it is wide
     const h = f.size * (fruitImg.naturalHeight / fruitImg.naturalWidth || 1)
-    if (rainFruit) ctx.drawImage(rainFruit, -f.size / 2, -h / 2, f.size, h)
+    if (fruitImg.complete) ctx.drawImage(fruitImg, -f.size / 2, -h / 2, f.size, h)
     ctx.restore()
   }
   requestAnimationFrame(frame)
