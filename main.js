@@ -1016,7 +1016,7 @@ function drawHud() {
   if (showHands) {
     for (const hand of handPoints) {
       ctx.lineWidth = Math.max(2, h * 0.004)
-      ctx.strokeStyle = 'rgba(46, 204, 113, 0.9)'
+      ctx.strokeStyle = 'rgba(157, 78, 221, 0.9)' // purple, like the fruit
       for (const [a, b] of HAND_BONES) {
         ctx.beginPath()
         ctx.moveTo(hand[a].x * w, hand[a].y * h)
@@ -1026,7 +1026,7 @@ function drawHud() {
       hand.forEach((p, i) => {
         ctx.beginPath()
         ctx.arc(p.x * w, p.y * h, Math.max(3, h * 0.006), 0, Math.PI * 2)
-        ctx.fillStyle = FINGERTIPS.includes(i) ? '#e63946' : '#f4c430'
+        ctx.fillStyle = FINGERTIPS.includes(i) ? '#5a189a' : '#e0c3fc'
         ctx.fill()
       })
     }
@@ -1170,7 +1170,8 @@ document.getElementById('go').addEventListener('click', async () => {
   statusText.textContent = 'starting camera...'
   try {
     video.srcObject = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720, facingMode: 'user' },
+      // ask for full HD so it isn't blurry when blown up to fill the screen
+      video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' },
       audio: false,
     })
     await video.play()
