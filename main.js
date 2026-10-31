@@ -95,7 +95,8 @@ varying vec2 uv;
 varying vec2 src;
 void main() {
   // the arm layer only draws you, never the background, so your curtains stay put
-  if (useMask > 0.5 && texture2D(mask, uv).r < 0.5) discard;
+  // fingers are thin, so the cut-out often only half catches them. be less fussy there
+  if (useMask > 0.5 && texture2D(mask, uv).r < (useMask > 1.5 ? 0.25 : 0.5)) discard;
   if (useMask > 1.5) {
     // the finger layer only draws pixels that came from the finger, not its neighbours
     vec2 pa = (src - finger.xy) * vec2(aspect, 1.0);
@@ -670,7 +671,7 @@ const FINGERS = [
   { tip: 20, base: 17 }, // pinky
 ]
 const FINGER_GRAB = 1.6 // how close (in finger widths) a pinch has to be to a fingertip
-const FINGER_ROOTED = 1.6 // above 1 keeps the knuckle end of the finger more still
+const FINGER_TIP = 0.7 // the last 30% of the finger keeps its shape, the rest stretches
 
 function fingerWidth(hand) {
   // about the gap between your knuckles
@@ -803,7 +804,6 @@ function targets(list, i) {
       ramp = Math.max(0, Math.min(1, (px * a.rx + py * a.ry) / a.rlen2))
       cx = a.root.x + (a.ax - a.root.x) * ramp
       cy = a.root.y + (a.ay - a.root.y) * ramp
-      if (a.gamma) ramp **= a.gamma
     }
     const ddx = (rest[i] - cx) * aspect
     const ddy = rest[i + 1] - cy
@@ -845,7 +845,6 @@ function step() {
       arms.push(a)
       lastArm = g.attach.arm
     } else if (g.attach.kind === 'finger') {
-      a.gamma = FINGER_ROOTED
       fingers.push(a)
       lastFinger = g.attach
     } else {
@@ -856,16 +855,85 @@ function step() {
   const now = performance.now()
   moveLayer(layers.pull, pulls, now)
   armAmount = moveLayer(layers.arm, arms, now)
-  fingerAmount = moveLayer(layers.finger, fingers, now)
+  fingerAmount = moveFinger(fingers[0], now)
   armMoving = arms.length > 0 || armAmount > 0.001
-  fingerMoving = fingers.length > 0 || fingerAmount > 0.001 || layers.finger.snap !== null
+  fingerMoving = fingers.length > 0 || fingerAmount > 0.001 || fingerPull.snap !== null
+}
+
+// a finger is too thin to pull like skin (it tears apart in the middle), so it's
+// stretched as one solid piece instead: from the knuckle out to wherever the tip
+// has been pulled, keeping its width, with the tip keeping its shape
+const fingerPull = { x: 0, y: 0, held: false, snap: null, start: 0, scale: 1 }
+
+function moveFinger(a, now) {
+  const P = fingerPull
+  if (a) {
+    P.snap = null
+  } else if (P.held) {
+    // just let go: bounce back from here like the face does
+    P.snap = [P.x, P.y]
+    P.start = now
+    P.scale = Math.min(1, SNAP_MAX / (Math.hypot(P.x * aspect, P.y) || 1))
+  }
+  P.held = !!a
+
+  if (P.snap) {
+    const t = (now - P.start) / 1000 / SNAP_TIME
+    let left = 1 - spring(t)
+    if (left < 0) left *= P.scale
+    const end = Math.min(1, Math.max(0, (t - 0.8) / 0.2))
+    left *= 1 - end * end * (3 - 2 * end)
+    P.x = P.snap[0] * left
+    P.y = P.snap[1] * left
+    if (t >= 1) P.snap = null
+  } else {
+    const rate = a ? FOLLOW : SETTLE
+    P.x += ((a ? a.dx : 0) - P.x) * rate
+    P.y += ((a ? a.dy : 0) - P.y) * rate
+  }
+
+  if (lastFinger) stretchFinger(lastFinger, P.x, P.y)
+  return Math.hypot(P.x * aspect, P.y)
+}
+
+function stretchFinger({ base, tip }, px, py) {
+  // everything here is in screen-height units so sideways and up/down match
+  const bx = base[0] * aspect
+  const by = base[1]
+  const ax = tip[0] * aspect - bx
+  const ay = tip[1] - by
+  const len = Math.hypot(ax, ay) || 1e-6
+  const ux = ax / len
+  const uy = ay / len
+  // where the finger points now, and how long it is
+  let nx = ax + px * aspect
+  let ny = ay + py
+  const newLen = Math.max(Math.hypot(nx, ny), len * 0.6) // never squash it to nothing
+  const nlen = Math.hypot(nx, ny) || 1e-6
+  nx /= nlen
+  ny /= nlen
+  const k = (newLen - (1 - FINGER_TIP) * len) / (FINGER_TIP * len)
+
+  for (let i = 0; i < fingerOffset.length; i += 2) {
+    const dx = rest[i] * aspect - bx
+    const dy = rest[i + 1] - by
+    const along = dx * ux + dy * uy
+    const side = -dx * uy + dy * ux
+    // behind the knuckle doesn't stretch, the middle does, the tip just moves
+    let out = along
+    if (along > len) out = newLen + (along - len)
+    else if (along > 0) out = along <= FINGER_TIP * len ? along * k : newLen - (len - along)
+    const x = bx + out * nx - side * ny
+    const y = by + out * ny + side * nx
+    fingerOffset[i] = (x - dx - bx) / aspect
+    fingerOffset[i + 1] = y - dy - by
+  }
 }
 
 // each stretch layer, and whether letting go of it bounces or slides back
 const layers = {
   pull: { data: offset, bounce: true, held: false, snap: null, start: 0, scale: 1 },
   arm: { data: armOffset, bounce: false, held: false, snap: null, start: 0, scale: 1 },
-  finger: { data: fingerOffset, bounce: true, held: false, snap: null, start: 0, scale: 1 },
 }
 
 function spring(t) {
@@ -1215,6 +1283,8 @@ document.getElementById('go').addEventListener('click', async () => {
     faceLandmarker = handLandmarker = poseLandmarker = segmenter = null
   }
 
+  // keep the sign, shrunk into the top left corner
+  document.getElementById('corner-sign').append(startScreen.querySelector('h1.sign svg'))
   startScreen.remove()
   resize()
   requestAnimationFrame(loop)
