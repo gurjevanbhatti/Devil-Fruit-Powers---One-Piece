@@ -508,11 +508,15 @@ function grabbingArm(wrist) {
 }
 
 function startGrab(id, x, y, wrist, skipHand) {
-  // a fingertip of your other hand wins over everything else
-  const finger = findFinger(x, y, skipHand)
-  if (finger) {
-    const [tx, ty] = finger.tip
-    grabs.set(id, { attach: { kind: 'finger', ...finger, ox: x - tx, oy: y - ty }, x, y, sigma: finger.fw * 0.65 })
+  // arm mode is just holding your arm out, not pinching
+  if (mode === 'arm') return
+
+  if (mode === 'finger') {
+    const finger = findFinger(x, y, skipHand)
+    if (finger) {
+      const [tx, ty] = finger.tip
+      grabs.set(id, { attach: { kind: 'finger', ...finger, ox: x - tx, oy: y - ty }, x, y, sigma: finger.fw * 0.65 })
+    }
     return
   }
 
@@ -591,11 +595,33 @@ let pinchPoints = []
 let handPoints = [] // every hand's 21 points in screen space, for the H guides
 let handLabels = [] // 'Left' / 'Right' for each of those, to keep track of which is which
 
-// press H to show what the camera thinks your hands are doing
+// press H (or the Tracking button) to show what the camera thinks your hands are doing
 let showHands = false
+const trackingButton = document.getElementById('tracking')
+function setTracking(on) {
+  showHands = on
+  trackingButton.classList.toggle('on', on)
+  trackingButton.setAttribute('aria-pressed', on)
+}
+trackingButton.addEventListener('click', () => setTracking(!showHands))
 addEventListener('keydown', (e) => {
-  if (e.key === 'h' || e.key === 'H') showHands = !showHands
+  if (e.key === 'h' || e.key === 'H') setTracking(!showHands)
 })
+
+// only one kind of stretch at a time: face (and body), arm, or fingers
+let mode = 'face'
+const modeButtons = document.querySelectorAll('#controls [data-mode]')
+for (const b of modeButtons) {
+  b.addEventListener('click', () => {
+    mode = b.dataset.mode
+    for (const o of modeButtons) {
+      o.classList.toggle('on', o === b)
+      o.setAttribute('aria-checked', o === b)
+    }
+    // let go of whatever was stretched, so it bounces back
+    for (const id of [...grabs.keys()]) endGrab(id)
+  })
+}
 
 function updateHands(result) {
   pinchPoints = []
@@ -734,7 +760,7 @@ function armOut(arm) {
 function updateArms(dt) {
   ARMS.forEach((arm, i) => {
     const st = armState[i]
-    const out = armOut(arm)
+    const out = mode === 'arm' ? armOut(arm) : null
     st.hand = pose ? handPoint(arm) : null
 
     if (!out) {

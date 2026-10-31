@@ -23,6 +23,36 @@ html, body {
 
 #hud { pointer-events: none; }
 
+/* face / arm / fingers picker and the tracking switch, top right */
+#controls {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+#controls button {
+  font-family: 'Bangers', system-ui, sans-serif;
+  font-size: 20px;
+  letter-spacing: 1.5px;
+  padding: 6px 16px;
+  border: 3px solid #3a2214;
+  border-radius: 999px;
+  background: #fff8e6;
+  color: #3a2214;
+  box-shadow: 0 4px 0 #3a2214;
+  cursor: pointer;
+}
+
+#controls .modes { display: flex; gap: 6px; }
+
+#controls button.on { background: #e63946; color: #fff; }
+#controls #tracking.on { background: #7b2cbf; color: #fff; }
+#controls button:active { transform: translateY(3px); box-shadow: 0 1px 0 #3a2214; }
+
 #cam { display: none; }
 
 /* plain tan background, so the sign and the chest stand out */

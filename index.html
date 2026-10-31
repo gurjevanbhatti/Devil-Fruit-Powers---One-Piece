@@ -15,6 +15,16 @@
     <canvas id="hud"></canvas>
   </div>
 
+  <!-- pick one stretch at a time, top right -->
+  <div id="controls">
+    <div class="modes" role="radiogroup" aria-label="What stretches">
+      <button data-mode="face" class="on" role="radio" aria-checked="true">Face</button>
+      <button data-mode="arm" role="radio" aria-checked="false">Arm</button>
+      <button data-mode="finger" role="radio" aria-checked="false">Fingers</button>
+    </div>
+    <button id="tracking" aria-pressed="false">Tracking</button>
+  </div>
+
   <div id="start">
     <!-- devil fruits raining down behind everything -->
     <canvas id="fruits"></canvas>
