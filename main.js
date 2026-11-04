@@ -596,17 +596,30 @@ let pinchPoints = []
 let handPoints = [] // every hand's 21 points in screen space, for the H guides
 let handLabels = [] // 'Left' / 'Right' for each of those, to keep track of which is which
 
-// press H (or the Tracking button) to show what the camera thinks your hands are doing
+// press H (or the Tracking button) to show what the camera thinks your hands and face
+// are doing. each press moves on to the next one: off, hands, face, both, then off again
+const TRACKING = [
+  { name: 'Off', hands: false, face: false },
+  { name: 'Hands', hands: true, face: false },
+  { name: 'Face', hands: false, face: true },
+  { name: 'Both', hands: true, face: true },
+]
+let tracking = 0
 let showHands = false
+let showFace = false
 const trackingButton = document.getElementById('tracking')
-function setTracking(on) {
-  showHands = on
-  trackingButton.classList.toggle('on', on)
-  trackingButton.setAttribute('aria-pressed', on)
+function nextTracking() {
+  tracking = (tracking + 1) % TRACKING.length
+  const t = TRACKING[tracking]
+  showHands = t.hands
+  showFace = t.face
+  trackingButton.textContent = t.name === 'Off' ? 'Tracking' : 'Tracking: ' + t.name
+  trackingButton.classList.toggle('on', tracking !== 0)
+  trackingButton.setAttribute('aria-pressed', tracking !== 0)
 }
-trackingButton.addEventListener('click', () => setTracking(!showHands))
+trackingButton.addEventListener('click', nextTracking)
 addEventListener('keydown', (e) => {
-  if (e.key === 'h' || e.key === 'H') setTracking(!showHands)
+  if (e.key === 'h' || e.key === 'H') nextTracking()
 })
 
 // only one kind of stretch at a time: face (and body), arm, or fingers
@@ -1106,6 +1119,25 @@ function drawHud() {
   const w = hud.width
   const h = hud.height
   ctx.clearRect(0, 0, w, h)
+
+  if (showFace && face) {
+    // the outline of your face, eyes, brows and lips, plus a faint dot on every point
+    ctx.lineWidth = Math.max(1.5, h * 0.003)
+    ctx.strokeStyle = 'rgba(244, 196, 48, 0.9)' // gold, like the straw hat
+    for (const { start, end } of FaceLandmarker.FACE_LANDMARKS_CONTOURS) {
+      ctx.beginPath()
+      ctx.moveTo(face[start].x * w, face[start].y * h)
+      ctx.lineTo(face[end].x * w, face[end].y * h)
+      ctx.stroke()
+    }
+    ctx.fillStyle = 'rgba(255, 248, 230, 0.6)'
+    const r = Math.max(1, h * 0.0018)
+    for (const p of face) {
+      ctx.beginPath()
+      ctx.arc(p.x * w, p.y * h, r, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
 
   if (showHands) {
     for (const hand of handPoints) {

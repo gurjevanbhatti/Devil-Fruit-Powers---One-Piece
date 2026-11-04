@@ -9,7 +9,7 @@ Stretch your face and body like Luffy, live on your webcam.
 - **Hold an arm out straight** for about a second. A yellow ring fills up around your hand, then your hand shoots outward and your arm stretches. Drop your arm to snap it back.
 - **Pinch one of your fingertips with your other hand** and pull. Just that finger stretches out like rubber.
 - Let go and it slides smoothly back to normal.
-- Press **H** to show your hand tracking (lines and dots over each hand). Press it again to hide it.
+- Press **H** (or the **Tracking** button) to show what the camera is tracking. Each press moves on to the next: hands (purple lines and dots over each hand), face (gold outline of your face, eyes, brows and lips), both, then off again.
 
 Only you stretch. You can't grab the background.
 
