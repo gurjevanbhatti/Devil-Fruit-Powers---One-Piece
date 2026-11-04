@@ -1115,26 +1115,44 @@ const HAND_BONES = [
 ]
 const FINGERTIPS = [4, 8, 12, 16, 20]
 
+function stretched(p) {
+  // where a point on your face ends up once the face / body pull has moved it: the
+  // pull from the four grid corners around it, blended by how close it is to each
+  const gx = Math.min(COLS, Math.max(0, p.x * COLS))
+  const gy = Math.min(ROWS, Math.max(0, p.y * ROWS))
+  const c = Math.min(COLS - 1, Math.floor(gx))
+  const r = Math.min(ROWS - 1, Math.floor(gy))
+  const fx = gx - c
+  const fy = gy - r
+  const at = (cc, rr, k) => offset[(rr * (COLS + 1) + cc) * 2 + k]
+  const blend = (k) =>
+    (at(c, r, k) * (1 - fx) + at(c + 1, r, k) * fx) * (1 - fy) +
+    (at(c, r + 1, k) * (1 - fx) + at(c + 1, r + 1, k) * fx) * fy
+  return [p.x + blend(0), p.y + blend(1)]
+}
+
 function drawHud() {
   const w = hud.width
   const h = hud.height
   ctx.clearRect(0, 0, w, h)
 
   if (showFace && face) {
-    // the outline of your face, eyes, brows and lips, plus a faint dot on every point
+    // the outline of your face, eyes, brows and lips, plus a faint dot on every point.
+    // each point moves with the skin under it, so the tracking stretches with you
+    const pts = face.map(stretched)
     ctx.lineWidth = Math.max(1.5, h * 0.003)
     ctx.strokeStyle = 'rgba(244, 196, 48, 0.9)' // gold, like the straw hat
     for (const { start, end } of FaceLandmarker.FACE_LANDMARKS_CONTOURS) {
       ctx.beginPath()
-      ctx.moveTo(face[start].x * w, face[start].y * h)
-      ctx.lineTo(face[end].x * w, face[end].y * h)
+      ctx.moveTo(pts[start][0] * w, pts[start][1] * h)
+      ctx.lineTo(pts[end][0] * w, pts[end][1] * h)
       ctx.stroke()
     }
     ctx.fillStyle = 'rgba(255, 248, 230, 0.6)'
     const r = Math.max(1, h * 0.0018)
-    for (const p of face) {
+    for (const [x, y] of pts) {
       ctx.beginPath()
-      ctx.arc(p.x * w, p.y * h, r, 0, Math.PI * 2)
+      ctx.arc(x * w, y * h, r, 0, Math.PI * 2)
       ctx.fill()
     }
   }
